@@ -2,16 +2,27 @@
 // -----------------------------------------------------------
 // Seeds a working single-tenant state: one org (OMG PAREA),
 // the 9-module curriculum spine, Module 2's 11 sections, and
-// demo users (one admin + two students) with their 20 gates.
+// demo users (one admin + three students) with their 20 gates.
+//
+// Phase 2 Step 1A addition: seeds Section 1 (Problem
+// Identification) content — categories, fields, sample
+// scenarios, and model answers. The full 60-scenario content
+// import comes in the next sub-step (Step 1A-content).
 //
 // Idempotent-ish: safe to re-run after db:init (which drops
 // and recreates tables). Not safe to run against a populated
 // production DB — use migrations for that later.
 // -----------------------------------------------------------
-
+ 
 import bcrypt from 'bcryptjs';
 import { pool, withTx, initSchema } from './db.js';
-
+import {
+  SECTION_1_CODE,
+  CATEGORIES as S1_CATEGORIES,
+  FIELDS as S1_FIELDS,
+  SCENARIOS as S1_SCENARIOS,
+} from './data/section1-problem-identification.js';
+ 
 const MODULES = [
   { order: 1, code: 'M1', name: 'Welcome & Orientation',       kind: 'orientation', hasGate: true,
     description: 'Onboarding videos, software orientation, program agreements requiring e-signature.' },
@@ -32,7 +43,7 @@ const MODULES = [
   { order: 9, code: 'M9', name: 'Advanced Business',           kind: 'business',    hasGate: true,
     description: 'Advanced business topics building on Module 7.' },
 ];
-
+ 
 const M2_SECTIONS = [
   'Problem Identification',
   'Scope of Work',
@@ -46,11 +57,97 @@ const M2_SECTIONS = [
   'Reconciliation',
   'Narrative Writing & Reporting',
 ];
-
+ 
+// -----------------------------------------------------------
+// Phase 2 Step 1A: seed Section 1 content
+// -----------------------------------------------------------
+async function seedSection1Content(c) {
+  // 1. Find the section row (M2-S1) that Phase 1 seeded earlier.
+  const secRes = await c.query(
+    `SELECT id FROM module_sections WHERE code = $1`,
+    [SECTION_1_CODE]
+  );
+  if (secRes.rows.length === 0) {
+    throw new Error(`Section ${SECTION_1_CODE} not found — Phase 1 seeding did not run first.`);
+  }
+  const sectionId = secRes.rows[0].id;
+ 
+  // 2. Categories
+  const catIdByKey = {};
+  for (const cat of S1_CATEGORIES) {
+    const r = await c.query(
+      `INSERT INTO scenario_categories
+         (section_id, order_index, code, name, color_primary, color_accent, description)
+       VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING id`,
+      [
+        sectionId,
+        cat.order,
+        `${SECTION_1_CODE}-C${cat.order}`,
+        cat.name,
+        cat.colorPrimary,
+        cat.colorAccent,
+        cat.description || null,
+      ]
+    );
+    catIdByKey[cat.key] = r.rows[0].id;
+  }
+ 
+  // 3. Fields
+  const fieldIdByKey = {};
+  for (const f of S1_FIELDS) {
+    const r = await c.query(
+      `INSERT INTO section_fields
+         (section_id, order_index, field_key, label, help_text)
+       VALUES ($1,$2,$3,$4,$5) RETURNING id`,
+      [sectionId, f.order, f.key, f.label, f.helpText || null]
+    );
+    fieldIdByKey[f.key] = r.rows[0].id;
+  }
+ 
+  // 4. Scenarios + model answers
+  let scenarioCount = 0;
+  let answerCount = 0;
+  for (const sc of S1_SCENARIOS) {
+    const categoryId = catIdByKey[sc.categoryKey];
+    if (!categoryId) {
+      throw new Error(`Unknown category key "${sc.categoryKey}" in scenario "${sc.title}".`);
+    }
+    const r = await c.query(
+      `INSERT INTO scenarios
+         (category_id, order_index, difficulty, title, scenario_text)
+       VALUES ($1,$2,$3,$4,$5) RETURNING id`,
+      [categoryId, sc.order, sc.difficulty, sc.title, sc.scenarioText]
+    );
+    const scenarioId = r.rows[0].id;
+    scenarioCount++;
+ 
+    for (const [fieldKey, answerText] of Object.entries(sc.modelAnswers)) {
+      const fieldId = fieldIdByKey[fieldKey];
+      if (!fieldId) {
+        throw new Error(`Unknown field key "${fieldKey}" in scenario "${sc.title}".`);
+      }
+      await c.query(
+        `INSERT INTO model_answers (scenario_id, field_id, answer_text)
+         VALUES ($1,$2,$3)`,
+        [scenarioId, fieldId, answerText]
+      );
+      answerCount++;
+    }
+  }
+ 
+  return {
+    sectionId,
+    categoryCount: S1_CATEGORIES.length,
+    fieldCount: S1_FIELDS.length,
+    scenarioCount,
+    answerCount,
+  };
+}
+ 
 async function seed() {
   // 1. Rebuild schema
   await initSchema();
-
+ 
   await withTx(async (c) => {
     // 2. Organization
     const orgRes = await c.query(
@@ -63,7 +160,7 @@ async function seed() {
       })]
     );
     const orgId = orgRes.rows[0].id;
-
+ 
     // 3. Modules
     const moduleIdByCode = {};
     for (const m of MODULES) {
@@ -74,7 +171,7 @@ async function seed() {
       );
       moduleIdByCode[m.code] = r.rows[0].id;
     }
-
+ 
     // 4. Module 2 sections (the 11 sub-gates)
     const m2Id = moduleIdByCode['M2'];
     const m2SectionIds = [];
@@ -86,17 +183,17 @@ async function seed() {
       );
       m2SectionIds.push(r.rows[0].id);
     }
-
+ 
     // 5. Users
     const hash = (pw) => bcrypt.hashSync(pw, 10);
-
+ 
     const admin = await c.query(
       `INSERT INTO users (organization_id, email, username, password_hash, role, first_name, last_name)
        VALUES ($1,$2,$3,$4,'admin','Paul','Ryll') RETURNING id`,
       [orgId, 'admin@omgparea.com', 'admin', hash('admin123')]
     );
     const adminId = admin.rows[0].id;
-
+ 
     const students = [];
     for (const s of [
       { email: 'jsmith@example.com',  user: 'jsmith',  first: 'Jordan', last: 'Smith'  },
@@ -110,10 +207,9 @@ async function seed() {
       );
       students.push({ id: r.rows[0].id, ...s });
     }
-
+ 
     // 6. For each student: enable all modules + create their 20 gates
     for (const s of students) {
-      // Module access — all enabled by default
       for (const m of MODULES) {
         await c.query(
           `INSERT INTO student_module_access (organization_id, student_id, module_id, enabled)
@@ -121,8 +217,7 @@ async function seed() {
           [orgId, s.id, moduleIdByCode[m.code]]
         );
       }
-
-      // Gates — one per module, except Module 2 which has 11 section gates (no module-level gate)
+ 
       for (const m of MODULES) {
         const mId = moduleIdByCode[m.code];
         if (m.code === 'M2') {
@@ -142,7 +237,7 @@ async function seed() {
         }
       }
     }
-
+ 
     // 7. Demo progression: unlock Jordan Smith's Module 1 gate so
     //    the sequential gating is observable out of the box.
     await c.query(
@@ -150,16 +245,25 @@ async function seed() {
        WHERE student_id = $2 AND module_id = $3 AND section_id IS NULL`,
       [adminId, students[0].id, moduleIdByCode['M1']]
     );
-
-    console.log(`✓ Seeded org "${orgId}" with ${students.length} students, ${MODULES.length} modules, ${m2SectionIds.length} M2 sections`);
+ 
+    console.log(`✓ Seeded org ${orgId} with ${students.length} students, ${MODULES.length} modules, ${m2SectionIds.length} M2 sections`);
+ 
+    // 8. Phase 2 Step 1A — seed Section 1 content
+    const s1 = await seedSection1Content(c);
+    console.log(
+      `✓ Seeded Section 1 (Problem Identification): ` +
+      `${s1.categoryCount} categories, ${s1.fieldCount} fields, ` +
+      `${s1.scenarioCount} scenarios, ${s1.answerCount} model answers ` +
+      `(SAMPLE — full 60-scenario import pending in Step 1A-content).`
+    );
   });
-
+ 
   console.log('\n--- Demo credentials ---');
   console.log('Admin:    admin / admin123');
   console.log('Students: jsmith / agarcia / kwilson  (password: student123)');
   console.log('jsmith has Module 1 pre-unlocked to show gating in action.\n');
 }
-
+ 
 seed()
   .then(() => pool.end())
   .then(() => process.exit(0))
@@ -167,3 +271,4 @@ seed()
     console.error('Seed failed:', err);
     process.exit(1);
   });
+ 
