@@ -1,65 +1,40 @@
 // client/src/App.jsx
 // -----------------------------------------------------------
-// OMG PAREA — Phase 1 UI
-// Three screens: Login, StudentDashboard, AdminDashboard.
-// Inline styles throughout to keep this a single-file scaffold.
+// OMG PAREA — root application.
+//
+// Responsibilities:
+//   - Auth bootstrap (try /me on mount; redirect to login
+//     if no token).
+//   - Role-based screen routing (student vs admin).
+//   - Student dashboard with in-app navigation into Section 1
+//     content (delegated to content-views.jsx).
+//
+// Shared building blocks (BRAND, api client, Card, etc.) live
+// in ui.jsx. Section 1 content screens live in content-views.jsx.
 // -----------------------------------------------------------
 
 import { useEffect, useState, useCallback } from 'react';
-
-// ─── Brand palette (Oscar Mike) ──────────────────────────────
-const BRAND = {
-  pink:    '#FF1493',
-  pinkDk:  '#CC1075',
-  black:   '#0E0E0E',
-  ink:     '#1a1a1a',
-  sub:     '#6b7280',
-  line:    '#e5e7eb',
-  bg:      '#f7f7f9',
-  card:    '#ffffff',
-  locked:  '#d1d5db',
-  ok:      '#10b981',
-  okBg:    '#ecfdf5',
-  warn:    '#f59e0b',
-  warnBg:  '#fffbeb',
-  danger:  '#ef4444',
-};
-
-// ─── API layer ───────────────────────────────────────────────
-const TOKEN_KEY = 'omgparea_token';
-
-const api = {
-  _token: () => localStorage.getItem(TOKEN_KEY),
-  async _req(path, { method = 'GET', body, auth = true } = {}) {
-    const headers = { 'Content-Type': 'application/json' };
-    if (auth) {
-      const t = api._token();
-      if (t) headers.Authorization = `Bearer ${t}`;
-    }
-    const res = await fetch(`/api${path}`, {
-      method,
-      headers,
-      body: body ? JSON.stringify(body) : undefined,
-    });
-    const isJson = (res.headers.get('content-type') || '').includes('application/json');
-    const data = isJson ? await res.json() : null;
-    if (!res.ok) {
-      const err = new Error(data?.error || `HTTP ${res.status}`);
-      err.status = res.status;
-      throw err;
-    }
-    return data;
-  },
-  login:             (username, password) => api._req('/auth/login', { method: 'POST', body: { username, password }, auth: false }),
-  me:                () => api._req('/auth/me'),
-  studentDashboard:  () => api._req('/students/me/dashboard'),
-  adminRoster:       () => api._req('/admin/students'),
-  adminStudent:      (id) => api._req(`/admin/students/${id}`),
-  unlockGate:        (gateId, note) => api._req(`/admin/gates/${gateId}/unlock`, { method: 'POST', body: { note } }),
-  lockGate:          (gateId) => api._req(`/admin/gates/${gateId}/lock`, { method: 'POST' }),
-  toggleModule:      (studentId, moduleId, enabled) =>
-                       api._req(`/admin/students/${studentId}/modules/${moduleId}/toggle`, { method: 'POST', body: { enabled } }),
-};
+import {
+  BRAND,
+  api,
+  Card,
+  CenteredMessage,
+  Field,
+  ProgressBar,
+  GateBadge,
+  Toggle,
+  Th,
+  Td,
+  inputStyle,
+  btnPrimary,
+  btnSecondary,
+  btnGhost,
+  pill,
+  pillStyle,
+  statusColor,
+  formatDate,
+} from './ui.jsx';
+import { SectionView, CategoryView, ScenarioView } from './content-views.jsx';
 
 // ─── Root App ────────────────────────────────────────────────
 export default function App() {
@@ -68,26 +43,32 @@ export default function App() {
   const [authError, setAuthError] = useState('');
 
   const refreshMe = useCallback(async () => {
-    const t = localStorage.getItem(TOKEN_KEY);
-    if (!t) { setUser(null); setLoading(false); return; }
+    const t = api._token();
+    if (!t) {
+      setUser(null);
+      setLoading(false);
+      return;
+    }
     try {
       const me = await api.me();
       setUser(me);
     } catch {
-      localStorage.removeItem(TOKEN_KEY);
+      api._clearToken();
       setUser(null);
     } finally {
       setLoading(false);
     }
   }, []);
 
-  useEffect(() => { refreshMe(); }, [refreshMe]);
+  useEffect(() => {
+    refreshMe();
+  }, [refreshMe]);
 
   const handleLogin = async (username, password) => {
     setAuthError('');
     try {
       const { token, user } = await api.login(username, password);
-      localStorage.setItem(TOKEN_KEY, token);
+      api._setToken(token);
       setUser(user);
     } catch (e) {
       setAuthError(e.message);
@@ -95,12 +76,12 @@ export default function App() {
   };
 
   const handleLogout = () => {
-    localStorage.removeItem(TOKEN_KEY);
+    api._clearToken();
     setUser(null);
   };
 
   if (loading) return <CenteredMessage>Loading…</CenteredMessage>;
-  if (!user)   return <Login onLogin={handleLogin} error={authError} />;
+  if (!user) return <Login onLogin={handleLogin} error={authError} />;
 
   if (user.role === 'student') return <StudentDashboard user={user} onLogout={handleLogout} />;
   if (user.role === 'admin' || user.role === 'super_admin') {
@@ -122,9 +103,25 @@ function Login({ onLogin, error }) {
   };
 
   return (
-    <div style={{ minHeight: '100vh', display: 'grid', placeItems: 'center', background: BRAND.bg, padding: 24 }}>
-      <div style={{ width: '100%', maxWidth: 420, background: BRAND.card, borderRadius: 12,
-                    padding: 32, boxShadow: '0 2px 24px rgba(0,0,0,0.06)' }}>
+    <div
+      style={{
+        minHeight: '100vh',
+        display: 'grid',
+        placeItems: 'center',
+        background: BRAND.bg,
+        padding: 24,
+      }}
+    >
+      <div
+        style={{
+          width: '100%',
+          maxWidth: 420,
+          background: BRAND.card,
+          borderRadius: 12,
+          padding: 32,
+          boxShadow: '0 2px 24px rgba(0,0,0,0.06)',
+        }}
+      >
         <div style={{ textAlign: 'center', marginBottom: 24 }}>
           <div style={{ fontSize: 28, fontWeight: 800, color: BRAND.black, letterSpacing: -0.5 }}>
             OMG <span style={{ color: BRAND.pink }}>PAREA</span>
@@ -159,12 +156,23 @@ function Login({ onLogin, error }) {
           </div>
         )}
 
-        <button onClick={submit} disabled={busy || !u || !p}
-                style={{ ...btnPrimary, width: '100%', marginTop: 16 }}>
+        <button
+          onClick={submit}
+          disabled={busy || !u || !p}
+          style={{ ...btnPrimary, width: '100%', marginTop: 16 }}
+        >
           {busy ? 'Signing in…' : 'Sign In'}
         </button>
 
-        <div style={{ marginTop: 20, fontSize: 11, color: BRAND.sub, textAlign: 'center', lineHeight: 1.6 }}>
+        <div
+          style={{
+            marginTop: 20,
+            fontSize: 11,
+            color: BRAND.sub,
+            textAlign: 'center',
+            lineHeight: 1.6,
+          }}
+        >
           Demo: <code>admin / admin123</code> · <code>jsmith / student123</code>
         </div>
       </div>
@@ -172,8 +180,77 @@ function Login({ onLogin, error }) {
   );
 }
 
-// ─── Student Dashboard ───────────────────────────────────────
+// ─── Student Dashboard (now routed) ──────────────────────────
 function StudentDashboard({ user, onLogout }) {
+  // Local in-app navigation state. No router needed for four screens.
+  // route shape: { view: 'dashboard' | 'section' | 'category' | 'scenario', ...context }
+  const [route, setRoute] = useState({ view: 'dashboard' });
+
+  const subtitle = {
+    dashboard: 'Your Program',
+    section:   'Exercise Section',
+    category:  'Category',
+    scenario:  'Scenario',
+  }[route.view];
+
+  let content;
+  if (route.view === 'dashboard') {
+    content = (
+      <DashboardView
+        user={user}
+        onOpenSection={(code) => setRoute({ view: 'section', sectionCode: code })}
+      />
+    );
+  } else if (route.view === 'section') {
+    content = (
+      <SectionView
+        sectionCode={route.sectionCode}
+        onBack={() => setRoute({ view: 'dashboard' })}
+        onOpenCategory={(catId) =>
+          setRoute({ view: 'category', categoryId: catId, sectionCode: route.sectionCode })
+        }
+      />
+    );
+  } else if (route.view === 'category') {
+    content = (
+      <CategoryView
+        categoryId={route.categoryId}
+        sectionCode={route.sectionCode}
+        onBack={() => setRoute({ view: 'section', sectionCode: route.sectionCode })}
+        onOpenScenario={(id) =>
+          setRoute({
+            view: 'scenario',
+            scenarioId: id,
+            categoryId: route.categoryId,
+            sectionCode: route.sectionCode,
+          })
+        }
+      />
+    );
+  } else if (route.view === 'scenario') {
+    content = (
+      <ScenarioView
+        scenarioId={route.scenarioId}
+        onBack={() =>
+          setRoute({
+            view: 'category',
+            categoryId: route.categoryId,
+            sectionCode: route.sectionCode,
+          })
+        }
+      />
+    );
+  }
+
+  return (
+    <AppShell user={user} onLogout={onLogout} subtitle={subtitle}>
+      {content}
+    </AppShell>
+  );
+}
+
+// ─── Dashboard view (the default student landing) ────────────
+function DashboardView({ user, onOpenSection }) {
   const [data, setData] = useState(null);
   const [err, setErr] = useState('');
 
@@ -181,8 +258,8 @@ function StudentDashboard({ user, onLogout }) {
     api.studentDashboard().then(setData).catch((e) => setErr(e.message));
   }, []);
 
-  if (err)   return <CenteredMessage>Error: {err}</CenteredMessage>;
-  if (!data) return <CenteredMessage>Loading your program…</CenteredMessage>;
+  if (err)   return <Card style={{ color: BRAND.danger }}>Error: {err}</Card>;
+  if (!data) return <Card style={{ color: BRAND.sub }}>Loading your program…</Card>;
 
   const unlockedCount = data.modules.reduce((n, m) => {
     if (m.code === 'M2') return n + (m.sections?.filter((s) => s.gate?.unlocked).length || 0);
@@ -194,13 +271,16 @@ function StudentDashboard({ user, onLogout }) {
   }, 0);
 
   return (
-    <AppShell
-      user={user}
-      onLogout={onLogout}
-      subtitle="Your Program"
-    >
+    <>
       <Card>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 6 }}>
+        <div
+          style={{
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'baseline',
+            marginBottom: 6,
+          }}
+        >
           <h2 style={{ margin: 0, fontSize: 20 }}>Welcome, {user.firstName}</h2>
           <div style={{ color: BRAND.sub, fontSize: 13 }}>
             {unlockedCount} / {totalGates} gates unlocked
@@ -208,25 +288,34 @@ function StudentDashboard({ user, onLogout }) {
         </div>
         <ProgressBar pct={(unlockedCount / totalGates) * 100} />
         <div style={{ color: BRAND.sub, fontSize: 13, marginTop: 10 }}>
-          Each module is gated. Complete the work, check in with your mentor, and your mentor will unlock the next step.
+          Each module is gated. Complete the work, check in with your mentor, and your mentor will
+          unlock the next step.
         </div>
       </Card>
 
       <div style={{ display: 'grid', gap: 12, marginTop: 16 }}>
-        {data.modules.map((m) => <StudentModuleCard key={m.id} m={m} />)}
+        {data.modules.map((m) => (
+          <StudentModuleCard key={m.id} m={m} onOpenSection={onOpenSection} />
+        ))}
       </div>
-    </AppShell>
+    </>
   );
 }
 
-function StudentModuleCard({ m }) {
+function StudentModuleCard({ m, onOpenSection }) {
   const isM2 = m.code === 'M2';
-  const accessible = isM2 ? true : m.accessible; // M2 itself is always visible; its sections gate individually
-  const unlocked = isM2 ? null : m.gate?.unlocked;
+  const accessible = isM2 ? true : m.accessible;
 
   return (
     <Card dim={!accessible}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', gap: 16, alignItems: 'flex-start' }}>
+      <div
+        style={{
+          display: 'flex',
+          justifyContent: 'space-between',
+          gap: 16,
+          alignItems: 'flex-start',
+        }}
+      >
         <div style={{ minWidth: 0 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
             <span style={pill(BRAND.black, '#fff')}>Module {m.order}</span>
@@ -235,33 +324,64 @@ function StudentModuleCard({ m }) {
           <div style={{ color: BRAND.sub, fontSize: 13, marginTop: 6 }}>{m.description}</div>
         </div>
         <div style={{ textAlign: 'right', flexShrink: 0 }}>
-          {!isM2 && <GateBadge unlocked={unlocked} accessible={accessible} />}
+          {!isM2 && <GateBadge unlocked={m.gate?.unlocked} accessible={accessible} />}
         </div>
       </div>
 
       {isM2 && (
         <div style={{ marginTop: 14, borderTop: `1px solid ${BRAND.line}`, paddingTop: 12 }}>
-          <div style={{ fontSize: 12, fontWeight: 600, color: BRAND.sub, textTransform: 'uppercase', letterSpacing: 0.4, marginBottom: 8 }}>
+          <div
+            style={{
+              fontSize: 12,
+              fontWeight: 600,
+              color: BRAND.sub,
+              textTransform: 'uppercase',
+              letterSpacing: 0.4,
+              marginBottom: 8,
+            }}
+          >
             11 Exercise Sections
           </div>
           <div style={{ display: 'grid', gap: 6 }}>
             {m.sections.map((s) => (
-              <div key={s.id} style={{
-                display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-                padding: '8px 10px', background: s.accessible ? '#fafafa' : '#f3f4f6',
-                borderRadius: 6, opacity: s.accessible ? 1 : 0.6,
-              }}>
-                <div style={{ fontSize: 13 }}>
-                  <span style={{ color: BRAND.sub, marginRight: 8 }}>{s.order}.</span>
-                  {s.name}
-                </div>
-                <GateBadge unlocked={s.gate?.unlocked} accessible={s.accessible} small />
-              </div>
+              <SectionRow key={s.id} s={s} onOpenSection={onOpenSection} />
             ))}
           </div>
         </div>
       )}
     </Card>
+  );
+}
+
+function SectionRow({ s, onOpenSection }) {
+  const clickable = s.accessible;
+  return (
+    <div
+      onClick={() => clickable && onOpenSection(s.code)}
+      style={{
+        display: 'flex',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        padding: '10px 12px',
+        background: clickable ? '#fafafa' : '#f3f4f6',
+        borderRadius: 6,
+        opacity: clickable ? 1 : 0.6,
+        cursor: clickable ? 'pointer' : 'default',
+        border: clickable ? `1px solid ${BRAND.line}` : '1px solid transparent',
+        transition: 'background .15s',
+      }}
+      onMouseEnter={(e) => clickable && (e.currentTarget.style.background = '#fff')}
+      onMouseLeave={(e) => clickable && (e.currentTarget.style.background = '#fafafa')}
+    >
+      <div style={{ fontSize: 13 }}>
+        <span style={{ color: BRAND.sub, marginRight: 8 }}>{s.order}.</span>
+        {s.name}
+        {clickable && (
+          <span style={{ marginLeft: 8, color: BRAND.pink, fontSize: 12 }}>→</span>
+        )}
+      </div>
+      <GateBadge unlocked={s.gate?.unlocked} accessible={s.accessible} small />
+    </div>
   );
 }
 
@@ -272,10 +392,14 @@ function AdminDashboard({ user, onLogout }) {
   const [err, setErr] = useState('');
 
   const loadRoster = useCallback(() => {
-    api.adminRoster().then((r) => setRoster(r.students)).catch((e) => setErr(e.message));
+    api.adminRoster()
+      .then((r) => setRoster(r.students))
+      .catch((e) => setErr(e.message));
   }, []);
 
-  useEffect(() => { loadRoster(); }, [loadRoster]);
+  useEffect(() => {
+    loadRoster();
+  }, [loadRoster]);
 
   if (err) return <CenteredMessage>Error: {err}</CenteredMessage>;
 
@@ -309,15 +433,32 @@ function AdminDashboard({ user, onLogout }) {
                 </thead>
                 <tbody>
                   {roster.map((s) => (
-                    <tr key={s.id} style={{ borderTop: `1px solid ${BRAND.line}`, cursor: 'pointer' }}
-                        onClick={() => setSelectedId(s.id)}>
-                      <Td><strong>{s.first_name} {s.last_name}</strong><div style={{ fontSize: 11, color: BRAND.sub }}>{s.email}</div></Td>
-                      <Td><code style={{ fontSize: 12 }}>{s.username}</code></Td>
-                      <Td><span style={pill(statusColor(s.status), '#fff')}>{s.status}</span></Td>
+                    <tr
+                      key={s.id}
+                      style={{ borderTop: `1px solid ${BRAND.line}`, cursor: 'pointer' }}
+                      onClick={() => setSelectedId(s.id)}
+                    >
                       <Td>
-                        <div style={{ fontSize: 13 }}>{s.gates_unlocked} / {s.gates_total}</div>
+                        <strong>
+                          {s.first_name} {s.last_name}
+                        </strong>
+                        <div style={{ fontSize: 11, color: BRAND.sub }}>{s.email}</div>
+                      </Td>
+                      <Td>
+                        <code style={{ fontSize: 12 }}>{s.username}</code>
+                      </Td>
+                      <Td>
+                        <span style={pill(statusColor(s.status), '#fff')}>{s.status}</span>
+                      </Td>
+                      <Td>
+                        <div style={{ fontSize: 13 }}>
+                          {s.gates_unlocked} / {s.gates_total}
+                        </div>
                         <div style={{ width: 120, marginTop: 4 }}>
-                          <ProgressBar pct={(s.gates_unlocked / Math.max(1, s.gates_total)) * 100} thin />
+                          <ProgressBar
+                            pct={(s.gates_unlocked / Math.max(1, s.gates_total)) * 100}
+                            thin
+                          />
                         </div>
                       </Td>
                       <Td>{s.modules_enabled} / 9</Td>
@@ -332,7 +473,10 @@ function AdminDashboard({ user, onLogout }) {
       ) : (
         <StudentDetail
           studentId={selectedId}
-          onBack={() => { setSelectedId(null); loadRoster(); }}
+          onBack={() => {
+            setSelectedId(null);
+            loadRoster();
+          }}
         />
       )}
     </AppShell>
@@ -350,16 +494,21 @@ function StudentDetail({ studentId, onBack }) {
     api.adminStudent(studentId).then(setDetail).catch((e) => setErr(e.message));
   }, [studentId]);
 
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    load();
+  }, [load]);
 
   const toggleGate = async (gate) => {
     setBusyGate(gate.id);
     try {
       if (gate.unlocked) await api.lockGate(gate.id);
-      else                await api.unlockGate(gate.id, 'Unlocked via admin dashboard');
+      else               await api.unlockGate(gate.id, 'Unlocked via admin dashboard');
       load();
-    } catch (e) { setErr(e.message); }
-    finally     { setBusyGate(null); }
+    } catch (e) {
+      setErr(e.message);
+    } finally {
+      setBusyGate(null);
+    }
   };
 
   const toggleModule = async (moduleId, enabled) => {
@@ -367,25 +516,48 @@ function StudentDetail({ studentId, onBack }) {
     try {
       await api.toggleModule(studentId, moduleId, enabled);
       load();
-    } catch (e) { setErr(e.message); }
-    finally     { setBusyToggle(null); }
+    } catch (e) {
+      setErr(e.message);
+    } finally {
+      setBusyToggle(null);
+    }
   };
 
-  if (err)      return <CenteredMessage>Error: {err} <button onClick={onBack} style={{ ...btnGhost, marginLeft: 8 }}>Back</button></CenteredMessage>;
-  if (!detail)  return <CenteredMessage>Loading student…</CenteredMessage>;
+  if (err)
+    return (
+      <CenteredMessage>
+        Error: {err}{' '}
+        <button onClick={onBack} style={{ ...btnGhost, marginLeft: 8 }}>
+          Back
+        </button>
+      </CenteredMessage>
+    );
+  if (!detail) return <CenteredMessage>Loading student…</CenteredMessage>;
 
   const { student, modules } = detail;
 
   return (
     <>
       <div style={{ marginBottom: 12 }}>
-        <button onClick={onBack} style={btnGhost}>← Back to Roster</button>
+        <button onClick={onBack} style={btnGhost}>
+          ← Back to Roster
+        </button>
       </div>
 
       <Card>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12, flexWrap: 'wrap' }}>
+        <div
+          style={{
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'flex-start',
+            gap: 12,
+            flexWrap: 'wrap',
+          }}
+        >
           <div>
-            <h2 style={{ margin: 0, fontSize: 20 }}>{student.first_name} {student.last_name}</h2>
+            <h2 style={{ margin: 0, fontSize: 20 }}>
+              {student.first_name} {student.last_name}
+            </h2>
             <div style={{ color: BRAND.sub, fontSize: 13, marginTop: 2 }}>
               {student.email} · <code>{student.username}</code>
             </div>
@@ -415,7 +587,15 @@ function AdminModuleCard({ m, onToggleGate, onToggleModule, busyGate, busyToggle
 
   return (
     <Card dim={!m.enabled}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12, flexWrap: 'wrap' }}>
+      <div
+        style={{
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'flex-start',
+          gap: 12,
+          flexWrap: 'wrap',
+        }}
+      >
         <div style={{ minWidth: 0, flex: 1 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
             <span style={pill(BRAND.black, '#fff')}>Module {m.order}</span>
@@ -443,15 +623,32 @@ function AdminModuleCard({ m, onToggleGate, onToggleModule, busyGate, busyToggle
 
       {isM2 && (
         <div style={{ marginTop: 14, borderTop: `1px solid ${BRAND.line}`, paddingTop: 12 }}>
-          <div style={{ fontSize: 12, fontWeight: 600, color: BRAND.sub, textTransform: 'uppercase', letterSpacing: 0.4, marginBottom: 8 }}>
+          <div
+            style={{
+              fontSize: 12,
+              fontWeight: 600,
+              color: BRAND.sub,
+              textTransform: 'uppercase',
+              letterSpacing: 0.4,
+              marginBottom: 8,
+            }}
+          >
             11 Exercise Section Gates
           </div>
           <div style={{ display: 'grid', gap: 6 }}>
             {m.sections.map((s) => (
-              <div key={s.id} style={{
-                display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12,
-                padding: '8px 10px', background: '#fafafa', borderRadius: 6,
-              }}>
+              <div
+                key={s.id}
+                style={{
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  alignItems: 'center',
+                  gap: 12,
+                  padding: '8px 10px',
+                  background: '#fafafa',
+                  borderRadius: 6,
+                }}
+              >
                 <div style={{ fontSize: 13, minWidth: 0, flex: 1 }}>
                   <span style={{ color: BRAND.sub, marginRight: 8 }}>{s.order}.</span>
                   {s.name}
@@ -484,93 +681,6 @@ function AdminModuleCard({ m, onToggleGate, onToggleModule, busyGate, busyToggle
   );
 }
 
-// ─── Shared UI pieces ────────────────────────────────────────
-function AppShell({ user, onLogout, subtitle, children }) {
-  return (
-    <div style={{ minHeight: '100vh', background: BRAND.bg }}>
-      <header style={{
-        background: BRAND.black, color: '#fff', padding: '14px 20px',
-        display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-      }}>
-        <div>
-          <div style={{ fontSize: 18, fontWeight: 800, letterSpacing: -0.3 }}>
-            OMG <span style={{ color: BRAND.pink }}>PAREA</span>
-          </div>
-          <div style={{ fontSize: 11, color: '#bbb', marginTop: 2 }}>{subtitle}</div>
-        </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-          <div style={{ fontSize: 13, textAlign: 'right' }}>
-            <div>{user.firstName} {user.lastName}</div>
-            <div style={{ fontSize: 11, color: '#bbb' }}>{user.organization?.name}</div>
-          </div>
-          <button onClick={onLogout} style={{
-            background: 'transparent', color: '#fff', border: '1px solid #444',
-            padding: '6px 12px', borderRadius: 6, cursor: 'pointer', fontSize: 13,
-          }}>
-            Sign out
-          </button>
-        </div>
-      </header>
-      <main style={{ maxWidth: 1100, margin: '0 auto', padding: '20px 16px 40px' }}>
-        {children}
-      </main>
-    </div>
-  );
-}
-
-function Card({ children, style, dim }) {
-  return (
-    <div style={{
-      background: BRAND.card,
-      borderRadius: 10,
-      padding: 18,
-      boxShadow: '0 1px 3px rgba(0,0,0,0.04)',
-      border: `1px solid ${BRAND.line}`,
-      opacity: dim ? 0.6 : 1,
-      transition: 'opacity .15s',
-      ...style,
-    }}>
-      {children}
-    </div>
-  );
-}
-
-function CenteredMessage({ children }) {
-  return (
-    <div style={{ minHeight: '100vh', display: 'grid', placeItems: 'center', background: BRAND.bg, padding: 24, color: BRAND.sub }}>
-      {children}
-    </div>
-  );
-}
-
-function Field({ label, children }) {
-  return (
-    <div style={{ marginBottom: 12 }}>
-      <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: BRAND.sub,
-                      textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 6 }}>
-        {label}
-      </label>
-      {children}
-    </div>
-  );
-}
-
-function ProgressBar({ pct, thin }) {
-  const clamped = Math.max(0, Math.min(100, pct || 0));
-  return (
-    <div style={{ height: thin ? 4 : 8, background: '#eee', borderRadius: 999, overflow: 'hidden' }}>
-      <div style={{ width: `${clamped}%`, height: '100%', background: BRAND.pink, transition: 'width .3s' }} />
-    </div>
-  );
-}
-
-function GateBadge({ unlocked, accessible, small }) {
-  const size = small ? { padding: '2px 8px', fontSize: 11 } : { padding: '4px 10px', fontSize: 12 };
-  if (unlocked)    return <span style={{ ...pillStyle(BRAND.ok, BRAND.okBg), ...size }}>Unlocked</span>;
-  if (!accessible) return <span style={{ ...pillStyle('#9ca3af', '#f3f4f6'), ...size }}>🔒 Prerequisite locked</span>;
-  return <span style={{ ...pillStyle(BRAND.warn, BRAND.warnBg), ...size }}>Awaiting mentor check-in</span>;
-}
-
 function GateButton({ gate, busy, onClick, small }) {
   const unlocked = gate.unlocked;
   const style = {
@@ -582,73 +692,57 @@ function GateButton({ gate, busy, onClick, small }) {
   };
   return (
     <button onClick={onClick} disabled={busy} style={style}>
-      {busy ? '…' : (unlocked ? 'Lock' : 'Unlock')}
+      {busy ? '…' : unlocked ? 'Lock' : 'Unlock'}
     </button>
   );
 }
 
-function Toggle({ checked, disabled, onChange }) {
+// ─── App Shell (shared chrome) ───────────────────────────────
+function AppShell({ user, onLogout, subtitle, children }) {
   return (
-    <button
-      type="button"
-      onClick={() => !disabled && onChange(!checked)}
-      disabled={disabled}
-      style={{
-        width: 40, height: 22, borderRadius: 999,
-        background: checked ? BRAND.pink : '#d1d5db',
-        position: 'relative', border: 'none', cursor: disabled ? 'default' : 'pointer',
-        padding: 0, transition: 'background .15s', opacity: disabled ? 0.5 : 1,
-      }}
-      aria-pressed={checked}
-    >
-      <span style={{
-        position: 'absolute', top: 2, left: checked ? 20 : 2,
-        width: 18, height: 18, background: '#fff', borderRadius: '50%',
-        transition: 'left .15s', boxShadow: '0 1px 2px rgba(0,0,0,0.2)',
-      }} />
-    </button>
+    <div style={{ minHeight: '100vh', background: BRAND.bg }}>
+      <header
+        style={{
+          background: BRAND.black,
+          color: '#fff',
+          padding: '14px 20px',
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+        }}
+      >
+        <div>
+          <div style={{ fontSize: 18, fontWeight: 800, letterSpacing: -0.3 }}>
+            OMG <span style={{ color: BRAND.pink }}>PAREA</span>
+          </div>
+          <div style={{ fontSize: 11, color: '#bbb', marginTop: 2 }}>{subtitle}</div>
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          <div style={{ fontSize: 13, textAlign: 'right' }}>
+            <div>
+              {user.firstName} {user.lastName}
+            </div>
+            <div style={{ fontSize: 11, color: '#bbb' }}>{user.organization?.name}</div>
+          </div>
+          <button
+            onClick={onLogout}
+            style={{
+              background: 'transparent',
+              color: '#fff',
+              border: '1px solid #444',
+              padding: '6px 12px',
+              borderRadius: 6,
+              cursor: 'pointer',
+              fontSize: 13,
+            }}
+          >
+            Sign out
+          </button>
+        </div>
+      </header>
+      <main style={{ maxWidth: 1100, margin: '0 auto', padding: '20px 16px 40px' }}>
+        {children}
+      </main>
+    </div>
   );
-}
-
-function Th({ children }) {
-  return <th style={{ padding: '10px 14px', fontSize: 12, fontWeight: 600, color: BRAND.sub,
-                      textTransform: 'uppercase', letterSpacing: 0.4 }}>{children}</th>;
-}
-function Td({ children, style }) {
-  return <td style={{ padding: '12px 14px', fontSize: 13, ...style }}>{children}</td>;
-}
-
-// ─── Styles & helpers ────────────────────────────────────────
-const inputStyle = {
-  width: '100%', padding: '10px 12px', fontSize: 14,
-  border: `1px solid ${BRAND.line}`, borderRadius: 6,
-  background: '#fff', boxSizing: 'border-box', outline: 'none',
-};
-
-const btnBase = {
-  border: 'none', borderRadius: 6, cursor: 'pointer', fontWeight: 600,
-  padding: '10px 16px', fontSize: 14, transition: 'opacity .15s',
-};
-const btnPrimary   = { ...btnBase, background: BRAND.pink,  color: '#fff' };
-const btnSecondary = { ...btnBase, background: '#e5e7eb',   color: BRAND.ink };
-const btnGhost     = { ...btnBase, background: 'transparent', color: BRAND.pink, padding: '6px 10px' };
-
-function pillStyle(fg, bg) {
-  return { background: bg, color: fg, borderRadius: 999, fontWeight: 600,
-           fontSize: 11, padding: '2px 8px', display: 'inline-block' };
-}
-function pill(bg, fg) {
-  return { background: bg, color: fg, borderRadius: 999, fontWeight: 600,
-           fontSize: 11, padding: '3px 10px', display: 'inline-block',
-           textTransform: 'uppercase', letterSpacing: 0.3 };
-}
-
-function statusColor(status) {
-  return { active: BRAND.ok, paused: BRAND.warn, completed: '#6366f1', withdrawn: BRAND.danger }[status] || BRAND.sub;
-}
-
-function formatDate(iso) {
-  if (!iso) return '';
-  try { return new Date(iso).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' }); }
-  catch { return iso; }
 }
