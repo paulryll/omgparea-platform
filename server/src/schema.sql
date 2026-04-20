@@ -1,6 +1,7 @@
 -- ============================================================
 -- OMG PAREA Platform — Database Schema
 -- Phase 1 + Phase 2 Step 1A (exercise content + submissions)
+-- Step 1D addition: admin feedback columns on submissions
 -- Multi-tenant ready. Every row scoped by organization_id.
 -- ============================================================
  
@@ -191,7 +192,8 @@ CREATE TABLE model_answers (
 -- when a student clicks "Submit Answers". Locked on create.
 -- Individual answers live in scenario_answers (one row per
 -- field). The submission row carries the submission-level
--- metadata (timestamp, time spent, locked flag).
+-- metadata (timestamp, time spent, locked flag, and the
+-- instructor's feedback note plus when/who saved it).
 -- ------------------------------------------------------------
 CREATE TABLE scenario_submissions (
   id                SERIAL PRIMARY KEY,
@@ -201,6 +203,9 @@ CREATE TABLE scenario_submissions (
   submitted_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   time_spent_sec    INT  NOT NULL DEFAULT 0,
   locked            BOOLEAN NOT NULL DEFAULT TRUE,
+  admin_feedback    TEXT,                     -- instructor's note to the student; NULL = no feedback yet
+  feedback_at       TIMESTAMPTZ,              -- when feedback was last saved; NULL if never
+  feedback_by       INT REFERENCES users(id), -- which admin wrote the feedback
   UNIQUE (student_id, scenario_id)
 );
 CREATE INDEX idx_submissions_student ON scenario_submissions (student_id);
