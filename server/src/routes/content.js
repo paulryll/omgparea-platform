@@ -6,6 +6,11 @@
 // admins are allowed through but use admin-content.js for
 // student-specific views).
 //
+// Step 1D addition:
+//   - GET /scenarios/:id now also returns any admin feedback
+//     attached to the student's submission, so the student's
+//     scenario review page can display instructor notes.
+//
 // Mount at /api/content — see server/src/index.js
 // -----------------------------------------------------------
  
@@ -194,17 +199,17 @@ router.get('/categories/:id/scenarios', requireAuth, async (req, res) => {
 // Returns a single scenario: narrative text + the section's
 // input fields. If the caller is a STUDENT who has already
 // submitted this scenario, the response also includes their
-// locked answers AND the model answers (revealed only
-// post-submission — that's what the schema + submit flow
-// guarantees).
+// locked answers, the model answers (revealed only
+// post-submission), and any admin feedback note attached to
+// their submission.
 //
-// Admins receive scenario + fields but no submission or
-// model-answer data from this endpoint — they use the admin
-// endpoints to review specific students.
+// Admins receive scenario + fields but no submission, model
+// answer, or feedback data from this endpoint — they use the
+// admin endpoints to review specific students.
 //
 // Used by: student "Scenario detail" page — both the
 // pre-submit form view AND the post-submit locked review
-// with model answers revealed.
+// with model answers and instructor feedback revealed.
 // -----------------------------------------------------------
 router.get('/scenarios/:id', requireAuth, async (req, res) => {
   const scenarioId = Number(req.params.id);
@@ -264,14 +269,20 @@ router.get('/scenarios/:id', requireAuth, async (req, res) => {
     })),
     submission: null,
     modelAnswers: null,
+    feedback: null,
   };
  
-  // Student-specific data: their own submission + model answers post-submit
+  // Student-specific data: their own submission + model answers
+  // + any admin feedback, all only available post-submit.
   if (req.user.role === 'student') {
     const subRes = await query(
-      `SELECT id, submitted_at, time_spent_sec, locked
-         FROM scenario_submissions
-        WHERE student_id = $1 AND scenario_id = $2 AND organization_id = $3`,
+      `SELECT ss.id, ss.submitted_at, ss.time_spent_sec, ss.locked,
+              ss.admin_feedback, ss.feedback_at, ss.feedback_by,
+              fb.first_name AS feedback_by_first_name,
+              fb.last_name  AS feedback_by_last_name
+         FROM scenario_submissions ss
+         LEFT JOIN users fb ON fb.id = ss.feedback_by
+        WHERE ss.student_id = $1 AND ss.scenario_id = $2 AND ss.organization_id = $3`,
       [req.user.id, scenarioId, req.user.organizationId]
     );
  
@@ -307,6 +318,22 @@ router.get('/scenarios/:id', requireAuth, async (req, res) => {
         modelAnswers[m.field_key] = { text: m.answer_text, commentary: m.commentary };
       }
       response.modelAnswers = modelAnswers;
+ 
+      // Include admin feedback if present. Only non-null if an admin
+      // has actually saved a note on this submission.
+      if (sub.admin_feedback) {
+        let savedByName = null;
+        if (sub.feedback_by_first_name || sub.feedback_by_last_name) {
+          savedByName = [sub.feedback_by_first_name, sub.feedback_by_last_name]
+            .filter(Boolean)
+            .join(' ');
+        }
+        response.feedback = {
+          text: sub.admin_feedback,
+          savedAt: sub.feedback_at,
+          savedByName,
+        };
+      }
     }
   }
  
