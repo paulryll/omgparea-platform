@@ -4,7 +4,16 @@
 // exercise content. Supports the mentor check-in workflow:
 // admin drills into a student's section progress, then into
 // each individual submission to compare the student's answer
-// side-by-side with the model answer for every field.
+// side-by-side with the model answer for every field, and
+// leave a written feedback note for the student.
+//
+// Step 1D additions:
+//   - Feedback metadata (admin_feedback / feedback_at /
+//     feedback_by / feedback_by_name) returned on the
+//     GET /submissions/:id endpoint.
+//   - New PUT /submissions/:id/feedback endpoint for saving
+//     feedback. Blank text clears the feedback; non-blank
+//     text stores the note and stamps the time/author.
 //
 // Mount at /api/admin/content — see server/src/index.js
 // -----------------------------------------------------------
@@ -57,6 +66,7 @@ router.get(
  
     // All scenarios in the section, each with category and this student's
     // submission (via LEFT JOIN so un-submitted scenarios still appear).
+    // feedback_at is included so the list view can show a "Feedback saved" marker.
     const rowsRes = await query(
       `SELECT sc.id             AS scenario_id,
               sc.order_index    AS scenario_order,
@@ -70,7 +80,8 @@ router.get(
               ss.id             AS submission_id,
               ss.submitted_at,
               ss.time_spent_sec,
-              ss.locked
+              ss.locked,
+              ss.feedback_at
          FROM scenarios sc
          JOIN scenario_categories cat ON cat.id = sc.category_id
          LEFT JOIN scenario_submissions ss
@@ -104,6 +115,8 @@ router.get(
               submittedAt: r.submitted_at,
               timeSpentSec: r.time_spent_sec,
               locked: r.locked,
+              hasFeedback: r.feedback_at != null,
+              feedbackAt: r.feedback_at,
             }
           : null,
       });
@@ -136,7 +149,8 @@ router.get(
 // Full side-by-side review of one submission. Returns the
 // scenario narrative, every field with the student's answer
 // and the model answer, plus submission metadata (timestamp,
-// time spent). This is the core review surface.
+// time spent), plus any existing admin feedback note. This
+// is the core review surface.
 //
 // Used by: admin "Submission detail" drill-down page.
 // -----------------------------------------------------------
@@ -150,9 +164,13 @@ router.get('/submissions/:id', async (req, res) => {
   const subRes = await query(
     `SELECT ss.id, ss.student_id, ss.scenario_id, ss.submitted_at,
             ss.time_spent_sec, ss.locked, ss.organization_id,
-            u.first_name, u.last_name, u.email
+            ss.admin_feedback, ss.feedback_at, ss.feedback_by,
+            u.first_name, u.last_name, u.email,
+            fb.first_name AS feedback_by_first_name,
+            fb.last_name  AS feedback_by_last_name
        FROM scenario_submissions ss
        JOIN users u ON u.id = ss.student_id
+       LEFT JOIN users fb ON fb.id = ss.feedback_by
       WHERE ss.id = $1`,
     [submissionId]
   );
@@ -196,6 +214,14 @@ router.get('/submissions/:id', async (req, res) => {
   const modelByFieldId = new Map();
   for (const m of modelRes.rows) modelByFieldId.set(m.field_id, m);
  
+  // Assemble the feedback-by-admin display name if we have one
+  let feedbackByName = null;
+  if (sub.feedback_by_first_name || sub.feedback_by_last_name) {
+    feedbackByName = [sub.feedback_by_first_name, sub.feedback_by_last_name]
+      .filter(Boolean)
+      .join(' ');
+  }
+ 
   res.json({
     student: {
       id: sub.student_id,
@@ -227,6 +253,12 @@ router.get('/submissions/:id', async (req, res) => {
       timeSpentSec: sub.time_spent_sec,
       locked: sub.locked,
     },
+    feedback: {
+      text: sub.admin_feedback,
+      savedAt: sub.feedback_at,
+      savedByUserId: sub.feedback_by,
+      savedByName: feedbackByName,
+    },
     fields: fieldRes.rows.map((f) => {
       const model = modelByFieldId.get(f.id);
       return {
@@ -240,6 +272,94 @@ router.get('/submissions/:id', async (req, res) => {
         commentary: model ? model.commentary : null,
       };
     }),
+  });
+});
+ 
+// -----------------------------------------------------------
+// PUT /api/admin/content/submissions/:id/feedback
+// -----------------------------------------------------------
+// Save (or clear) the admin's feedback note for a submission.
+//
+// Body: { feedback: string }
+//   - Non-blank string: stores the text and stamps the time
+//     and author (req.user.id).
+//   - Blank/empty string: clears the note, timestamp, and author.
+//
+// Rejects with:
+//   400 — invalid body or submission id
+//   404 — submission not found / not in admin's org
+//
+// Used by: admin "Submission detail" page — save button on
+// the feedback textarea.
+// -----------------------------------------------------------
+router.put('/submissions/:id/feedback', async (req, res) => {
+  const submissionId = Number(req.params.id);
+  const orgId = req.user.organizationId;
+  const adminId = req.user.id;
+ 
+  if (!Number.isInteger(submissionId)) {
+    return res.status(400).json({ error: 'Invalid submission id' });
+  }
+ 
+  const { feedback } = req.body || {};
+  if (feedback !== undefined && typeof feedback !== 'string') {
+    return res.status(400).json({ error: 'feedback must be a string' });
+  }
+ 
+  // Verify the submission exists and belongs to the admin's org
+  const checkRes = await query(
+    `SELECT id FROM scenario_submissions
+      WHERE id = $1 AND organization_id = $2`,
+    [submissionId, orgId]
+  );
+  if (checkRes.rows.length === 0) {
+    return res.status(404).json({ error: 'Submission not found in your organization' });
+  }
+ 
+  const trimmed = typeof feedback === 'string' ? feedback.trim() : '';
+ 
+  if (trimmed === '') {
+    // Clearing the feedback
+    await query(
+      `UPDATE scenario_submissions
+          SET admin_feedback = NULL,
+              feedback_at    = NULL,
+              feedback_by    = NULL
+        WHERE id = $1`,
+      [submissionId]
+    );
+    return res.json({
+      feedback: { text: null, savedAt: null, savedByUserId: null, savedByName: null },
+    });
+  }
+ 
+  // Saving (or updating) feedback
+  const updateRes = await query(
+    `UPDATE scenario_submissions
+        SET admin_feedback = $1,
+            feedback_at    = NOW(),
+            feedback_by    = $2
+      WHERE id = $3
+      RETURNING admin_feedback, feedback_at, feedback_by`,
+    [trimmed, adminId, submissionId]
+  );
+  const row = updateRes.rows[0];
+ 
+  // Look up the admin's display name for the response
+  const nameRes = await query(
+    `SELECT first_name, last_name FROM users WHERE id = $1`,
+    [adminId]
+  );
+  const n = nameRes.rows[0] || {};
+  const savedByName = [n.first_name, n.last_name].filter(Boolean).join(' ') || null;
+ 
+  res.json({
+    feedback: {
+      text: row.admin_feedback,
+      savedAt: row.feedback_at,
+      savedByUserId: row.feedback_by,
+      savedByName,
+    },
   });
 });
  
