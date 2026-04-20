@@ -7,7 +7,7 @@
 // own file.
 // -----------------------------------------------------------
 
-// ─── Brand palette (Oscar Mike) ──────────────────────────────
+// ─── Brand palette (Oscar Mike) ─────────────────────────────
 export const BRAND = {
   pink:    '#FF1493',
   pinkDk:  '#CC1075',
@@ -81,13 +81,21 @@ export const api = {
   submitScenario:    (id, body) =>
     api._req(`/content/scenarios/${id}/submit`, { method: 'POST', body }),
 
-  // Admin content (Phase 2) — UI for these arrives in Step 1D
+  // Admin content (Phase 2)
   adminSectionSubmissions: (studentId, code) =>
     api._req(`/admin/content/students/${studentId}/sections/${code}/submissions`),
   adminSubmission: (id) => api._req(`/admin/content/submissions/${id}`),
+
+  // Admin feedback (Step 1D) — save or clear an admin's feedback note on a submission.
+  // Pass an empty string to clear. Returns { feedback: {...} }.
+  saveSubmissionFeedback: (submissionId, feedback) =>
+    api._req(`/admin/content/submissions/${submissionId}/feedback`, {
+      method: 'PUT',
+      body: { feedback },
+    }),
 };
 
-// ─── UI primitives ───────────────────────────────────────────
+// ─── UI primitives ──────────────────────────────────────────
 export function Card({ children, style, dim }) {
   return (
     <div
@@ -233,7 +241,7 @@ export function Td({ children, style }) {
   return <td style={{ padding: '12px 14px', fontSize: 13, ...style }}>{children}</td>;
 }
 
-// ─── Style tokens & helpers ──────────────────────────────────
+// ─── Style tokens & helpers ─────────────────────────────────
 export const inputStyle = {
   width: '100%',
   padding: '10px 12px',
