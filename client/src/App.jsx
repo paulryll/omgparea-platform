@@ -6,11 +6,14 @@
 //   - Auth bootstrap (try /me on mount; redirect to login
 //     if no token).
 //   - Role-based screen routing (student vs admin).
-//   - Student dashboard with in-app navigation into Section 1
+//   - Student dashboard with in-app navigation into Section
 //     content (delegated to content-views.jsx).
+//   - Admin dashboard with roster, gate/module management,
+//     and (new in Step 1D) per-student work review flow.
 //
 // Shared building blocks (BRAND, api client, Card, etc.) live
-// in ui.jsx. Section 1 content screens live in content-views.jsx.
+// in ui.jsx. Content screens (student + admin review) live in
+// content-views.jsx.
 // -----------------------------------------------------------
 
 import { useEffect, useState, useCallback } from 'react';
@@ -30,13 +33,19 @@ import {
   btnSecondary,
   btnGhost,
   pill,
-  pillStyle,
   statusColor,
   formatDate,
 } from './ui.jsx';
-import { SectionView, CategoryView, ScenarioView } from './content-views.jsx';
+import {
+  SectionView,
+  CategoryView,
+  ScenarioView,
+  StudentReviewView,
+  SectionReviewView,
+  SubmissionReviewView,
+} from './content-views.jsx';
 
-// ─── Root App ────────────────────────────────────────────────
+// ─── Root App ───────────────────────────────────────────────
 export default function App() {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -90,7 +99,7 @@ export default function App() {
   return <CenteredMessage>Unrecognized role: {user.role}</CenteredMessage>;
 }
 
-// ─── Login ───────────────────────────────────────────────────
+// ─── Login ──────────────────────────────────────────────────
 function Login({ onLogin, error }) {
   const [u, setU] = useState('');
   const [p, setP] = useState('');
@@ -180,9 +189,8 @@ function Login({ onLogin, error }) {
   );
 }
 
-// ─── Student Dashboard (now routed) ──────────────────────────
+// ─── Student Dashboard ──────────────────────────────────────
 function StudentDashboard({ user, onLogout }) {
-  // Local in-app navigation state. No router needed for four screens.
   // route shape: { view: 'dashboard' | 'section' | 'category' | 'scenario', ...context }
   const [route, setRoute] = useState({ view: 'dashboard' });
 
@@ -249,7 +257,7 @@ function StudentDashboard({ user, onLogout }) {
   );
 }
 
-// ─── Dashboard view (the default student landing) ────────────
+// ─── Dashboard view (the default student landing) ──────────
 function DashboardView({ user, onOpenSection }) {
   const [data, setData] = useState(null);
   const [err, setErr] = useState('');
@@ -385,10 +393,16 @@ function SectionRow({ s, onOpenSection }) {
   );
 }
 
-// ─── Admin Dashboard ─────────────────────────────────────────
+// ─── Admin Dashboard ────────────────────────────────────────
+// route shape:
+//   { view: 'roster' }
+//   { view: 'studentDetail',    studentId }
+//   { view: 'studentReview',    studentId }
+//   { view: 'sectionReview',    studentId, sectionCode }
+//   { view: 'submissionReview', studentId, sectionCode, submissionId }
 function AdminDashboard({ user, onLogout }) {
   const [roster, setRoster] = useState(null);
-  const [selectedId, setSelectedId] = useState(null);
+  const [route, setRoute] = useState({ view: 'roster' });
   const [err, setErr] = useState('');
 
   const loadRoster = useCallback(() => {
@@ -403,86 +417,177 @@ function AdminDashboard({ user, onLogout }) {
 
   if (err) return <CenteredMessage>Error: {err}</CenteredMessage>;
 
-  return (
-    <AppShell user={user} onLogout={onLogout} subtitle="Admin · Mentor">
-      {selectedId == null ? (
-        <>
-          <Card>
-            <h2 style={{ margin: 0, fontSize: 20 }}>Student Roster</h2>
-            <div style={{ color: BRAND.sub, fontSize: 13, marginTop: 4 }}>
-              Click a student to review progress, unlock gates, or toggle modules.
-            </div>
-          </Card>
+  const subtitle = {
+    roster:           'Admin · Mentor',
+    studentDetail:    'Admin · Gates & Modules',
+    studentReview:    'Admin · Review Work',
+    sectionReview:    'Admin · Section Review',
+    submissionReview: 'Admin · Submission Review',
+  }[route.view] || 'Admin';
 
-          <Card style={{ marginTop: 12, padding: 0, overflow: 'hidden' }}>
-            {roster == null ? (
-              <div style={{ padding: 24, color: BRAND.sub }}>Loading roster…</div>
-            ) : roster.length === 0 ? (
-              <div style={{ padding: 24, color: BRAND.sub }}>No students yet.</div>
-            ) : (
-              <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                <thead>
-                  <tr style={{ background: '#fafafa', textAlign: 'left' }}>
-                    <Th>Student</Th>
-                    <Th>Username</Th>
-                    <Th>Status</Th>
-                    <Th>Gates Unlocked</Th>
-                    <Th>Modules Enabled</Th>
-                    <Th></Th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {roster.map((s) => (
-                    <tr
-                      key={s.id}
-                      style={{ borderTop: `1px solid ${BRAND.line}`, cursor: 'pointer' }}
-                      onClick={() => setSelectedId(s.id)}
-                    >
-                      <Td>
-                        <strong>
-                          {s.first_name} {s.last_name}
-                        </strong>
-                        <div style={{ fontSize: 11, color: BRAND.sub }}>{s.email}</div>
-                      </Td>
-                      <Td>
-                        <code style={{ fontSize: 12 }}>{s.username}</code>
-                      </Td>
-                      <Td>
-                        <span style={pill(statusColor(s.status), '#fff')}>{s.status}</span>
-                      </Td>
-                      <Td>
-                        <div style={{ fontSize: 13 }}>
-                          {s.gates_unlocked} / {s.gates_total}
-                        </div>
-                        <div style={{ width: 120, marginTop: 4 }}>
-                          <ProgressBar
-                            pct={(s.gates_unlocked / Math.max(1, s.gates_total)) * 100}
-                            thin
-                          />
-                        </div>
-                      </Td>
-                      <Td>{s.modules_enabled} / 9</Td>
-                      <Td style={{ color: BRAND.pink, fontWeight: 600 }}>Review →</Td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            )}
-          </Card>
-        </>
-      ) : (
-        <StudentDetail
-          studentId={selectedId}
-          onBack={() => {
-            setSelectedId(null);
-            loadRoster();
-          }}
-        />
-      )}
+  let content;
+  if (route.view === 'roster') {
+    content = (
+      <RosterView
+        roster={roster}
+        onOpenDetail={(studentId) => setRoute({ view: 'studentDetail', studentId })}
+        onOpenReview={(studentId) => setRoute({ view: 'studentReview', studentId })}
+      />
+    );
+  } else if (route.view === 'studentDetail') {
+    content = (
+      <StudentDetail
+        studentId={route.studentId}
+        onBack={() => {
+          setRoute({ view: 'roster' });
+          loadRoster();
+        }}
+      />
+    );
+  } else if (route.view === 'studentReview') {
+    content = (
+      <StudentReviewView
+        studentId={route.studentId}
+        onBack={() => {
+          setRoute({ view: 'roster' });
+          loadRoster();
+        }}
+        onOpenSection={(sectionCode) =>
+          setRoute({ view: 'sectionReview', studentId: route.studentId, sectionCode })
+        }
+      />
+    );
+  } else if (route.view === 'sectionReview') {
+    content = (
+      <SectionReviewView
+        studentId={route.studentId}
+        sectionCode={route.sectionCode}
+        onBack={() => setRoute({ view: 'studentReview', studentId: route.studentId })}
+        onOpenSubmission={(submissionId) =>
+          setRoute({
+            view: 'submissionReview',
+            studentId: route.studentId,
+            sectionCode: route.sectionCode,
+            submissionId,
+          })
+        }
+      />
+    );
+  } else if (route.view === 'submissionReview') {
+    content = (
+      <SubmissionReviewView
+        submissionId={route.submissionId}
+        onBack={() =>
+          setRoute({
+            view: 'sectionReview',
+            studentId: route.studentId,
+            sectionCode: route.sectionCode,
+          })
+        }
+      />
+    );
+  }
+
+  return (
+    <AppShell user={user} onLogout={onLogout} subtitle={subtitle}>
+      {content}
     </AppShell>
   );
 }
 
+// ─── Roster (the table) ─────────────────────────────────────
+function RosterView({ roster, onOpenDetail, onOpenReview }) {
+  return (
+    <>
+      <Card>
+        <h2 style={{ margin: 0, fontSize: 20 }}>Student Roster</h2>
+        <div style={{ color: BRAND.sub, fontSize: 13, marginTop: 4 }}>
+          Click <strong>Review Work</strong> to grade a student's submissions. Click{' '}
+          <strong>Gates</strong> to manage gate unlocks and module visibility.
+        </div>
+      </Card>
+
+      <Card style={{ marginTop: 12, padding: 0, overflow: 'hidden' }}>
+        {roster == null ? (
+          <div style={{ padding: 24, color: BRAND.sub }}>Loading roster…</div>
+        ) : roster.length === 0 ? (
+          <div style={{ padding: 24, color: BRAND.sub }}>No students yet.</div>
+        ) : (
+          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+            <thead>
+              <tr style={{ background: '#fafafa', textAlign: 'left' }}>
+                <Th>Student</Th>
+                <Th>Username</Th>
+                <Th>Status</Th>
+                <Th>Gates Unlocked</Th>
+                <Th>Modules Enabled</Th>
+                <Th>Actions</Th>
+              </tr>
+            </thead>
+            <tbody>
+              {roster.map((s) => (
+                <tr key={s.id} style={{ borderTop: `1px solid ${BRAND.line}` }}>
+                  <Td>
+                    <strong>
+                      {s.first_name} {s.last_name}
+                    </strong>
+                    <div style={{ fontSize: 11, color: BRAND.sub }}>{s.email}</div>
+                  </Td>
+                  <Td>
+                    <code style={{ fontSize: 12 }}>{s.username}</code>
+                  </Td>
+                  <Td>
+                    <span style={pill(statusColor(s.status), '#fff')}>{s.status}</span>
+                  </Td>
+                  <Td>
+                    <div style={{ fontSize: 13 }}>
+                      {s.gates_unlocked} / {s.gates_total}
+                    </div>
+                    <div style={{ width: 120, marginTop: 4 }}>
+                      <ProgressBar
+                        pct={(s.gates_unlocked / Math.max(1, s.gates_total)) * 100}
+                        thin
+                      />
+                    </div>
+                  </Td>
+                  <Td>{s.modules_enabled} / 9</Td>
+                  <Td>
+                    <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                      <button
+                        onClick={() => onOpenReview(s.id)}
+                        style={{
+                          ...btnPrimary,
+                          padding: '6px 12px',
+                          fontSize: 12,
+                          whiteSpace: 'nowrap',
+                        }}
+                      >
+                        Review Work
+                      </button>
+                      <button
+                        onClick={() => onOpenDetail(s.id)}
+                        style={{
+                          ...btnSecondary,
+                          padding: '6px 12px',
+                          fontSize: 12,
+                          whiteSpace: 'nowrap',
+                        }}
+                      >
+                        Gates
+                      </button>
+                    </div>
+                  </Td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </Card>
+    </>
+  );
+}
+
+// ─── Student detail (gates & modules management) ───────────
 function StudentDetail({ studentId, onBack }) {
   const [detail, setDetail] = useState(null);
   const [err, setErr] = useState('');
@@ -697,7 +802,7 @@ function GateButton({ gate, busy, onClick, small }) {
   );
 }
 
-// ─── App Shell (shared chrome) ───────────────────────────────
+// ─── App Shell (shared chrome) ──────────────────────────────
 function AppShell({ user, onLogout, subtitle, children }) {
   return (
     <div style={{ minHeight: '100vh', background: BRAND.bg }}>
