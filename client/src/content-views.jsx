@@ -577,6 +577,7 @@ export function ScenarioView({ scenarioId, onBack }) {
 // fetch submission summaries for sections listed here.
 const SECTIONS_WITH_CONTENT = [
   { code: 'M2-S1', name: 'Problem Identification' },
+  { code: 'M2-S2', name: 'Scope of Work' },
 ];
 
 // ───────────────────────────────────────────────────────────
