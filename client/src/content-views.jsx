@@ -29,6 +29,12 @@ import {
   pill,
   pillStyle,
 } from './ui.jsx';
+import {
+  FieldRenderer,
+  blankAnswerFor,
+  isAnswerComplete,
+  submitValueFor,
+} from './field-types.jsx';
 
 // ═══════════════════════════════════════════════════════════
 // STUDENT SCREENS
@@ -297,11 +303,25 @@ export function ScenarioView({ scenarioId, onBack }) {
       .then((res) => {
         setData(res);
         if (res.submission?.answers) {
-          setAnswers(res.submission.answers);
+          // Restore from server: each entry is { text, data }.
+          // For text fields we want the plain string; for structured
+          // fields we want the data object (with text merged in if present).
+          const restored = {};
+          for (const f of res.fields) {
+            const a = res.submission.answers[f.key];
+            if (!a) {
+              restored[f.key] = blankAnswerFor(f);
+            } else if (f.type === 'text' || !f.type) {
+              restored[f.key] = a.text || '';
+            } else {
+              restored[f.key] = { ...(a.data || {}), text: a.text || '' };
+            }
+          }
+          setAnswers(restored);
         } else {
           const blank = {};
           res.fields.forEach((f) => {
-            blank[f.key] = '';
+            blank[f.key] = blankAnswerFor(f);
           });
           setAnswers(blank);
         }
@@ -312,10 +332,10 @@ export function ScenarioView({ scenarioId, onBack }) {
   const handleSubmit = async () => {
     if (!data) return;
 
-    const missing = data.fields.filter((f) => !(answers[f.key] || '').trim());
+    const missing = data.fields.filter((f) => !isAnswerComplete(f, answers[f.key]));
     if (missing.length > 0) {
       setSubmitError(
-        `Please fill in all ${data.fields.length} fields before submitting. Missing: ${missing
+        `Please complete all ${data.fields.length} fields before submitting. Missing: ${missing
           .map((f) => f.label)
           .join(', ')}`
       );
@@ -333,7 +353,13 @@ export function ScenarioView({ scenarioId, onBack }) {
     setSubmitError('');
     try {
       const timeSpentSec = Math.floor((Date.now() - startTime) / 1000);
-      const res = await api.submitScenario(scenarioId, { answers, timeSpentSec });
+      // Build the payload: text fields submit as plain strings (legacy
+      // shape), structured fields submit as their object.
+      const payload = {};
+      for (const f of data.fields) {
+        payload[f.key] = submitValueFor(f, answers[f.key]);
+      }
+      const res = await api.submitScenario(scenarioId, { answers: payload, timeSpentSec });
       setSubmittedPayload({
         submittedAt: res.submittedAt,
         timeSpentSec: res.timeSpentSec,
@@ -492,16 +518,19 @@ export function ScenarioView({ scenarioId, onBack }) {
       )}
 
       <div style={{ marginTop: 12, display: 'grid', gap: 12 }}>
-        {data.fields.map((f) => (
-          <FieldPanel
-            key={f.id}
-            field={f}
-            value={answers[f.key] || ''}
-            onChange={(v) => setAnswers((a) => ({ ...a, [f.key]: v }))}
-            locked={isLocked}
-            modelAnswer={modelAnswers ? modelAnswers[f.key] : null}
-          />
-        ))}
+        {data.fields.map((f) => {
+          const modelForField = modelAnswers ? modelAnswers[f.key] : null;
+          return (
+            <FieldRenderer
+              key={f.id}
+              field={f}
+              mode={isLocked ? 'locked' : 'edit'}
+              value={answers[f.key]}
+              onChange={(v) => setAnswers((a) => ({ ...a, [f.key]: v }))}
+              model={modelForField}
+            />
+          );
+        })}
       </div>
 
       {!isLocked && (
@@ -534,109 +563,10 @@ export function ScenarioView({ scenarioId, onBack }) {
   );
 }
 
-function FieldPanel({ field, value, onChange, locked, modelAnswer }) {
-  return (
-    <Card>
-      <div style={{ fontSize: 13, fontWeight: 700, color: BRAND.ink, marginBottom: 6 }}>
-        {field.label}
-      </div>
-      {field.helpText && (
-        <div style={{ fontSize: 12, color: BRAND.sub, marginBottom: 8 }}>{field.helpText}</div>
-      )}
+// FieldPanel was removed in Step 3 — text rendering is now handled by
+// the TextField component in field-types.jsx, dispatched via FieldRenderer.
 
-      {!locked ? (
-        <textarea
-          value={value}
-          onChange={(e) => onChange(e.target.value)}
-          rows={3}
-          style={{
-            width: '100%',
-            padding: '10px 12px',
-            fontSize: 14,
-            border: `1px solid ${BRAND.line}`,
-            borderRadius: 6,
-            background: '#fff',
-            boxSizing: 'border-box',
-            outline: 'none',
-            fontFamily: 'inherit',
-            resize: 'vertical',
-            minHeight: 70,
-          }}
-        />
-      ) : (
-        <div
-          style={{
-            background: '#f9fafb',
-            border: `1px solid ${BRAND.line}`,
-            borderRadius: 6,
-            padding: '10px 12px',
-            fontSize: 14,
-            color: BRAND.ink,
-            whiteSpace: 'pre-wrap',
-            lineHeight: 1.5,
-          }}
-        >
-          <div
-            style={{
-              fontSize: 11,
-              fontWeight: 600,
-              color: BRAND.sub,
-              textTransform: 'uppercase',
-              letterSpacing: 0.3,
-              marginBottom: 4,
-            }}
-          >
-            Your Answer
-          </div>
-          {value || <span style={{ color: BRAND.sub, fontStyle: 'italic' }}>(no answer)</span>}
-        </div>
-      )}
 
-      {locked && modelAnswer && (
-        <div
-          style={{
-            marginTop: 10,
-            background: BRAND.okBg,
-            border: `1px solid ${BRAND.ok}`,
-            borderRadius: 6,
-            padding: '10px 12px',
-            fontSize: 14,
-            lineHeight: 1.55,
-            whiteSpace: 'pre-wrap',
-            color: BRAND.ink,
-          }}
-        >
-          <div
-            style={{
-              fontSize: 11,
-              fontWeight: 600,
-              color: BRAND.ok,
-              textTransform: 'uppercase',
-              letterSpacing: 0.3,
-              marginBottom: 4,
-            }}
-          >
-            Model Answer
-          </div>
-          {modelAnswer.text}
-          {modelAnswer.commentary && (
-            <div
-              style={{
-                marginTop: 8,
-                paddingTop: 8,
-                borderTop: `1px dashed ${BRAND.ok}`,
-                fontSize: 13,
-                color: BRAND.sub,
-              }}
-            >
-              <em>{modelAnswer.commentary}</em>
-            </div>
-          )}
-        </div>
-      )}
-    </Card>
-  );
-}
 
 // ═══════════════════════════════════════════════════════════
 // ADMIN REVIEW SCREENS (new in Step 1D)
@@ -1029,7 +959,28 @@ export function SubmissionReviewView({ submissionId, onBack }) {
       {/* Side-by-side field comparison */}
       <div style={{ display: 'grid', gap: 12, marginTop: 12 }}>
         {fields.map((f) => (
-          <ReviewFieldPanel key={f.id} field={f} />
+          <FieldRenderer
+            key={f.id}
+            field={f}
+            mode="review"
+            value={
+              // For review, we wrap the student's answer in the same shape
+              // FieldRenderer expects for display. text + data are passed
+              // through; FieldRenderer's components read the type and
+              // render the appropriate side-by-side display.
+              f.type === 'text' || !f.type
+                ? f.studentAnswer
+                : { ...(f.studentAnswerData || {}), text: f.studentAnswer || '' }
+            }
+            onChange={() => {
+              /* no-op in review mode */
+            }}
+            model={{
+              text: f.modelAnswer,
+              data: f.modelAnswerData,
+              commentary: f.commentary,
+            }}
+          />
         ))}
       </div>
 
@@ -1118,99 +1069,10 @@ export function SubmissionReviewView({ submissionId, onBack }) {
   );
 }
 
-function ReviewFieldPanel({ field }) {
-  return (
-    <Card>
-      <div style={{ fontSize: 14, fontWeight: 700, color: BRAND.ink, marginBottom: 4 }}>
-        {field.label}
-      </div>
-      {field.helpText && (
-        <div style={{ fontSize: 12, color: BRAND.sub, marginBottom: 10 }}>{field.helpText}</div>
-      )}
-      <div
-        style={{
-          display: 'grid',
-          gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))',
-          gap: 10,
-          marginTop: field.helpText ? 0 : 8,
-        }}
-      >
-        {/* Student's answer */}
-        <div
-          style={{
-            background: '#f9fafb',
-            border: `1px solid ${BRAND.line}`,
-            borderRadius: 6,
-            padding: '10px 12px',
-            fontSize: 13,
-            lineHeight: 1.55,
-            whiteSpace: 'pre-wrap',
-            color: BRAND.ink,
-          }}
-        >
-          <div
-            style={{
-              fontSize: 10,
-              fontWeight: 600,
-              color: BRAND.sub,
-              textTransform: 'uppercase',
-              letterSpacing: 0.3,
-              marginBottom: 6,
-            }}
-          >
-            Student Answer
-          </div>
-          {field.studentAnswer || (
-            <span style={{ color: BRAND.sub, fontStyle: 'italic' }}>(no answer)</span>
-          )}
-        </div>
+// ReviewFieldPanel was removed in Step 3 — admin side-by-side review
+// is now handled by FieldRenderer in mode='review' from field-types.jsx.
 
-        {/* Model answer */}
-        <div
-          style={{
-            background: BRAND.okBg,
-            border: `1px solid ${BRAND.ok}`,
-            borderRadius: 6,
-            padding: '10px 12px',
-            fontSize: 13,
-            lineHeight: 1.55,
-            whiteSpace: 'pre-wrap',
-            color: BRAND.ink,
-          }}
-        >
-          <div
-            style={{
-              fontSize: 10,
-              fontWeight: 600,
-              color: BRAND.ok,
-              textTransform: 'uppercase',
-              letterSpacing: 0.3,
-              marginBottom: 6,
-            }}
-          >
-            Model Answer
-          </div>
-          {field.modelAnswer || (
-            <span style={{ color: BRAND.sub, fontStyle: 'italic' }}>(no model answer)</span>
-          )}
-          {field.commentary && (
-            <div
-              style={{
-                marginTop: 8,
-                paddingTop: 8,
-                borderTop: `1px dashed ${BRAND.ok}`,
-                fontSize: 12,
-                color: BRAND.sub,
-              }}
-            >
-              <em>{field.commentary}</em>
-            </div>
-          )}
-        </div>
-      </div>
-    </Card>
-  );
-}
+
 
 // ═══════════════════════════════════════════════════════════
 // SHARED HELPERS
