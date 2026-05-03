@@ -8,25 +8,30 @@
 // leave a written feedback note for the student.
 //
 // Step 1D additions:
-//   - Feedback metadata (admin_feedback / feedback_at /
-//     feedback_by / feedback_by_name) returned on the
-//     GET /submissions/:id endpoint.
-//   - New PUT /submissions/:id/feedback endpoint for saving
-//     feedback. Blank text clears the feedback; non-blank
-//     text stores the note and stamps the time/author.
+//   - Feedback metadata returned on GET /submissions/:id.
+//   - PUT /submissions/:id/feedback for saving feedback.
+//
+// Step 2 additions (structured fields):
+//   - GET /submissions/:id now returns each field's
+//     field_type and field_options so the admin review UI
+//     knows how to render the comparison.
+//   - Each field row now includes both the text answer and
+//     the structured answer_data (for student) and the text
+//     answer + model_data (for the model). The frontend
+//     decides how to display each based on field_type.
 //
 // Mount at /api/admin/content — see server/src/index.js
 // -----------------------------------------------------------
- 
+
 import { Router } from 'express';
 import { query } from '../db.js';
 import { requireAuth, requireRole } from '../auth.js';
- 
+
 const router = Router();
- 
+
 // Every endpoint in this router is admin-only.
 router.use(requireAuth, requireRole('admin'));
- 
+
 // -----------------------------------------------------------
 // GET /api/admin/content/students/:studentId/sections/:code/submissions
 // -----------------------------------------------------------
@@ -43,7 +48,7 @@ router.get(
     const studentId = Number(req.params.studentId);
     const sectionCode = req.params.code;
     const orgId = req.user.organizationId;
- 
+
     // Confirm the student is in the admin's org
     const stuRes = await query(
       `SELECT id, first_name, last_name, email, organization_id
@@ -54,7 +59,7 @@ router.get(
       return res.status(404).json({ error: 'Student not found in your organization' });
     }
     const student = stuRes.rows[0];
- 
+
     const secRes = await query(
       `SELECT id, code, name FROM module_sections WHERE code = $1`,
       [sectionCode]
@@ -63,7 +68,7 @@ router.get(
       return res.status(404).json({ error: `Section ${sectionCode} not found` });
     }
     const section = secRes.rows[0];
- 
+
     // All scenarios in the section, each with category and this student's
     // submission (via LEFT JOIN so un-submitted scenarios still appear).
     // feedback_at is included so the list view can show a "Feedback saved" marker.
@@ -90,7 +95,7 @@ router.get(
         ORDER BY cat.order_index ASC, sc.order_index ASC`,
       [studentId, section.id]
     );
- 
+
     // Group scenarios by category
     const byCategory = new Map();
     for (const r of rowsRes.rows) {
@@ -121,10 +126,10 @@ router.get(
           : null,
       });
     }
- 
+
     const submittedCount = rowsRes.rows.filter((r) => r.submission_id != null).length;
     const totalCount = rowsRes.rows.length;
- 
+
     res.json({
       student: {
         id: student.id,
@@ -142,17 +147,21 @@ router.get(
     });
   }
 );
- 
+
 // -----------------------------------------------------------
 // GET /api/admin/content/submissions/:id
 // -----------------------------------------------------------
 // Full side-by-side review of one submission. Returns the
 // scenario narrative, every field with the student's answer
 // and the model answer, plus submission metadata (timestamp,
-// time spent), plus any existing admin feedback note. This
-// is the core review surface.
+// time spent), plus any existing admin feedback note.
 //
-// Used by: admin "Submission detail" drill-down page.
+// Step 2 enhancement: each field row now includes its
+// field_type and field_options, plus structured answer_data
+// (student) and model_data (model). This lets the admin
+// review UI render the appropriate comparison per field type.
+// For text fields the data fields are null and the existing
+// answer_text / model answer_text are used as before.
 // -----------------------------------------------------------
 router.get('/submissions/:id', async (req, res) => {
   const submissionId = Number(req.params.id);
@@ -160,7 +169,7 @@ router.get('/submissions/:id', async (req, res) => {
   if (!Number.isInteger(submissionId)) {
     return res.status(400).json({ error: 'Invalid submission id' });
   }
- 
+
   const subRes = await query(
     `SELECT ss.id, ss.student_id, ss.scenario_id, ss.submitted_at,
             ss.time_spent_sec, ss.locked, ss.organization_id,
@@ -178,7 +187,7 @@ router.get('/submissions/:id', async (req, res) => {
     return res.status(404).json({ error: 'Submission not found in your organization' });
   }
   const sub = subRes.rows[0];
- 
+
   const scRes = await query(
     `SELECT sc.id, sc.order_index, sc.difficulty, sc.title, sc.scenario_text,
             cat.id AS category_id, cat.name AS category_name,
@@ -191,29 +200,39 @@ router.get('/submissions/:id', async (req, res) => {
     [sub.scenario_id]
   );
   const sc = scRes.rows[0];
- 
+
   const fieldRes = await query(
-    `SELECT id, order_index, field_key, label, help_text
+    `SELECT id, order_index, field_key, label, help_text, field_type, field_options
        FROM section_fields
       WHERE section_id = $1
       ORDER BY order_index ASC`,
     [sc.section_id]
   );
- 
+
   const ansRes = await query(
-    `SELECT field_id, answer_text FROM scenario_answers WHERE submission_id = $1`,
+    `SELECT field_id, answer_text, answer_data
+       FROM scenario_answers WHERE submission_id = $1`,
     [submissionId]
   );
   const studentByFieldId = new Map();
-  for (const a of ansRes.rows) studentByFieldId.set(a.field_id, a.answer_text);
- 
+  for (const a of ansRes.rows) {
+    studentByFieldId.set(a.field_id, { text: a.answer_text, data: a.answer_data });
+  }
+
   const modelRes = await query(
-    `SELECT field_id, answer_text, commentary FROM model_answers WHERE scenario_id = $1`,
+    `SELECT field_id, answer_text, commentary, model_data
+       FROM model_answers WHERE scenario_id = $1`,
     [sub.scenario_id]
   );
   const modelByFieldId = new Map();
-  for (const m of modelRes.rows) modelByFieldId.set(m.field_id, m);
- 
+  for (const m of modelRes.rows) {
+    modelByFieldId.set(m.field_id, {
+      text: m.answer_text,
+      commentary: m.commentary,
+      data: m.model_data,
+    });
+  }
+
   // Assemble the feedback-by-admin display name if we have one
   let feedbackByName = null;
   if (sub.feedback_by_first_name || sub.feedback_by_last_name) {
@@ -221,7 +240,7 @@ router.get('/submissions/:id', async (req, res) => {
       .filter(Boolean)
       .join(' ');
   }
- 
+
   res.json({
     student: {
       id: sub.student_id,
@@ -260,21 +279,28 @@ router.get('/submissions/:id', async (req, res) => {
       savedByName: feedbackByName,
     },
     fields: fieldRes.rows.map((f) => {
-      const model = modelByFieldId.get(f.id);
+      const stu = studentByFieldId.get(f.id) || { text: null, data: null };
+      const mod = modelByFieldId.get(f.id) || { text: null, commentary: null, data: null };
       return {
         id: f.id,
         order: f.order_index,
         key: f.field_key,
         label: f.label,
         helpText: f.help_text,
-        studentAnswer: studentByFieldId.get(f.id) ?? null,
-        modelAnswer: model ? model.answer_text : null,
-        commentary: model ? model.commentary : null,
+        type: f.field_type || 'text',
+        options: f.field_options || null,
+        // Student answer — both forms returned; UI uses what it needs
+        studentAnswer:     stu.text,
+        studentAnswerData: stu.data,
+        // Model answer — same dual shape
+        modelAnswer:     mod.text,
+        modelAnswerData: mod.data,
+        commentary:      mod.commentary,
       };
     }),
   });
 });
- 
+
 // -----------------------------------------------------------
 // PUT /api/admin/content/submissions/:id/feedback
 // -----------------------------------------------------------
@@ -284,28 +310,21 @@ router.get('/submissions/:id', async (req, res) => {
 //   - Non-blank string: stores the text and stamps the time
 //     and author (req.user.id).
 //   - Blank/empty string: clears the note, timestamp, and author.
-//
-// Rejects with:
-//   400 — invalid body or submission id
-//   404 — submission not found / not in admin's org
-//
-// Used by: admin "Submission detail" page — save button on
-// the feedback textarea.
 // -----------------------------------------------------------
 router.put('/submissions/:id/feedback', async (req, res) => {
   const submissionId = Number(req.params.id);
   const orgId = req.user.organizationId;
   const adminId = req.user.id;
- 
+
   if (!Number.isInteger(submissionId)) {
     return res.status(400).json({ error: 'Invalid submission id' });
   }
- 
+
   const { feedback } = req.body || {};
   if (feedback !== undefined && typeof feedback !== 'string') {
     return res.status(400).json({ error: 'feedback must be a string' });
   }
- 
+
   // Verify the submission exists and belongs to the admin's org
   const checkRes = await query(
     `SELECT id FROM scenario_submissions
@@ -315,9 +334,9 @@ router.put('/submissions/:id/feedback', async (req, res) => {
   if (checkRes.rows.length === 0) {
     return res.status(404).json({ error: 'Submission not found in your organization' });
   }
- 
+
   const trimmed = typeof feedback === 'string' ? feedback.trim() : '';
- 
+
   if (trimmed === '') {
     // Clearing the feedback
     await query(
@@ -332,7 +351,7 @@ router.put('/submissions/:id/feedback', async (req, res) => {
       feedback: { text: null, savedAt: null, savedByUserId: null, savedByName: null },
     });
   }
- 
+
   // Saving (or updating) feedback
   const updateRes = await query(
     `UPDATE scenario_submissions
@@ -344,7 +363,7 @@ router.put('/submissions/:id/feedback', async (req, res) => {
     [trimmed, adminId, submissionId]
   );
   const row = updateRes.rows[0];
- 
+
   // Look up the admin's display name for the response
   const nameRes = await query(
     `SELECT first_name, last_name FROM users WHERE id = $1`,
@@ -352,7 +371,7 @@ router.put('/submissions/:id/feedback', async (req, res) => {
   );
   const n = nameRes.rows[0] || {};
   const savedByName = [n.first_name, n.last_name].filter(Boolean).join(' ') || null;
- 
+
   res.json({
     feedback: {
       text: row.admin_feedback,
@@ -362,6 +381,5 @@ router.put('/submissions/:id/feedback', async (req, res) => {
     },
   });
 });
- 
+
 export default router;
- 
