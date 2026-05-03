@@ -5,7 +5,9 @@
     "buildCommand": "npm run install:all && npm --prefix client run build"
   },
   "deploy": {
-    "preDeployCommand": ["node server/src/seed.js"],
+    "preDeployCommand": [
+      "node server/src/migrate.js"
+    ],
     "startCommand": "npm --prefix server start",
     "healthcheckPath": "/api/health",
     "healthcheckTimeout": 60,
