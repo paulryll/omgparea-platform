@@ -209,6 +209,23 @@ router.get('/submissions/:id', async (req, res) => {
     [sc.section_id]
   );
 
+  // Look up any per-scenario field option overrides — mirrors the
+  // student-facing GET /scenarios/:id endpoint in content.js. Some
+  // sections (notably Section 3) carry the entire option payload at
+  // the scenario level rather than the section level, so without this
+  // merge the admin frontend would receive null options for those
+  // fields and have nothing to render.
+  const overrideRes = await query(
+    `SELECT field_id, field_options_override
+       FROM model_answers
+      WHERE scenario_id = $1 AND field_options_override IS NOT NULL`,
+    [sub.scenario_id]
+  );
+  const overrideByFieldId = new Map();
+  for (const r of overrideRes.rows) {
+    overrideByFieldId.set(r.field_id, r.field_options_override);
+  }
+
   const ansRes = await query(
     `SELECT field_id, answer_text, answer_data
        FROM scenario_answers WHERE submission_id = $1`,
@@ -288,7 +305,8 @@ router.get('/submissions/:id', async (req, res) => {
         label: f.label,
         helpText: f.help_text,
         type: f.field_type || 'text',
-        options: f.field_options || null,
+        // Use override when present, otherwise the section default.
+        options: overrideByFieldId.get(f.id) || f.field_options || null,
         // Student answer — both forms returned; UI uses what it needs
         studentAnswer:     stu.text,
         studentAnswerData: stu.data,
