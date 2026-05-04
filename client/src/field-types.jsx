@@ -942,6 +942,80 @@ function CompCardTxnFooter({ comp }) {
   );
 }
 
+// Shared comp-review row used by BOTH locked mode (student viewing
+// their own work) and review mode (admin reviewing a student).
+// `perspective` controls labeling: "Your decision" vs "Student decision".
+function CompReviewRow({ comp, studentDecision, studentRank, modelVerdict, modelRank, modelExplanation, perspective }) {
+  const studentVerdict = studentDecision?.verdict;
+  const studentReason = studentDecision?.reason;
+  const matched = studentVerdict && modelVerdict && studentVerdict === modelVerdict;
+  const youOrStudent = perspective === 'admin' ? 'Student' : 'Your';
+  return (
+    <div
+      style={{
+        border: `1px solid ${BRAND.line}`,
+        borderLeft: `4px solid ${matched ? BRAND.ok : '#c62828'}`,
+        borderRadius: 8,
+        background: '#fff',
+        overflow: 'hidden',
+      }}
+    >
+      <CompCardHeader comp={comp} />
+      <CompCardBody comp={comp} />
+      <CompCardTxnFooter comp={comp} />
+      <div
+        style={{
+          padding: '10px 12px',
+          borderTop: `1px solid ${BRAND.line}`,
+          fontSize: 12,
+          display: 'grid',
+          gap: 4,
+        }}
+      >
+        <div>
+          <span style={{ color: BRAND.sub }}>{youOrStudent} decision:</span>{' '}
+          <strong style={{ color: BRAND.ink }}>{studentVerdict || '(none)'}</strong>
+          {studentVerdict === 'reject' && studentReason && (
+            <span style={{ color: BRAND.sub }}> — {studentReason}</span>
+          )}
+          {studentRank !== -1 && (
+            <span style={{ marginLeft: 8, color: BRAND.pink, fontWeight: 700 }}>
+              {perspective === 'admin' ? 'Student' : 'Your'} pick #{studentRank + 1}
+            </span>
+          )}
+        </div>
+        <div>
+          <span style={{ color: BRAND.sub }}>Model decision:</span>{' '}
+          <strong style={{ color: BRAND.ok }}>{modelVerdict || '(none)'}</strong>
+          {modelRank !== -1 && (
+            <span style={{ marginLeft: 8, color: BRAND.ok, fontWeight: 700 }}>
+              Model rank #{modelRank + 1}
+            </span>
+          )}
+          <span
+            style={{
+              marginLeft: 8,
+              fontSize: 11,
+              fontWeight: 700,
+              padding: '1px 8px',
+              borderRadius: 10,
+              background: matched ? BRAND.okBg : '#fdecea',
+              color: matched ? BRAND.ok : '#c62828',
+            }}
+          >
+            {matched ? '✓ correct' : '✗ incorrect'}
+          </span>
+        </div>
+        {modelExplanation && (
+          <div style={{ marginTop: 4, color: BRAND.sub, fontSize: 12, lineHeight: 1.4 }}>
+            <em>{modelExplanation}</em>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function ComparablesField({ field, mode, value, onChange, model }) {
   const opts = field.options || {};
   const comps = Array.isArray(opts.comps) ? opts.comps : [];
@@ -1237,67 +1311,18 @@ function ComparablesField({ field, mode, value, onChange, model }) {
 
         <div style={{ ...sectionLabelStyle, color: BRAND.sub, marginBottom: 8 }}>Comp-by-Comp Review</div>
         <div style={{ display: 'grid', gap: 10, marginBottom: 14 }}>
-          {comps.map((c) => {
-            const studentVerdict = decisions[c.id]?.verdict;
-            const modelVerdict = verdicts[c.id];
-            const matched = studentVerdict && modelVerdict && studentVerdict === modelVerdict;
-            const studentRank = selections.indexOf(c.id);
-            const modelRank = ranking.indexOf(c.id);
-            return (
-              <div
-                key={c.id}
-                style={{
-                  border: `1px solid ${BRAND.line}`,
-                  borderLeft: `4px solid ${matched ? BRAND.ok : '#c62828'}`,
-                  borderRadius: 8,
-                  background: '#fff',
-                  overflow: 'hidden',
-                }}
-              >
-                <CompCardHeader comp={c} />
-                <CompCardBody comp={c} />
-                <CompCardTxnFooter comp={c} />
-                <div style={{ padding: '10px 12px', borderTop: `1px solid ${BRAND.line}`, fontSize: 12, display: 'grid', gap: 4 }}>
-                  <div>
-                    <span style={{ color: BRAND.sub }}>Your verdict:</span>{' '}
-                    <strong style={{ color: BRAND.ink }}>{studentVerdict || '(none)'}</strong>
-                    {studentRank !== -1 && (
-                      <span style={{ marginLeft: 8, color: BRAND.pink, fontWeight: 700 }}>
-                        Your pick #{studentRank + 1}
-                      </span>
-                    )}
-                  </div>
-                  <div>
-                    <span style={{ color: BRAND.sub }}>Model verdict:</span>{' '}
-                    <strong style={{ color: BRAND.ok }}>{modelVerdict || '(none)'}</strong>
-                    {modelRank !== -1 && (
-                      <span style={{ marginLeft: 8, color: BRAND.ok, fontWeight: 700 }}>
-                        Model rank #{modelRank + 1}
-                      </span>
-                    )}
-                    <span
-                      style={{
-                        marginLeft: 8,
-                        fontSize: 11,
-                        fontWeight: 700,
-                        padding: '1px 8px',
-                        borderRadius: 10,
-                        background: matched ? BRAND.okBg : '#fdecea',
-                        color: matched ? BRAND.ok : '#c62828',
-                      }}
-                    >
-                      {matched ? '✓ correct' : '✗ incorrect'}
-                    </span>
-                  </div>
-                  {explanations[c.id] && (
-                    <div style={{ marginTop: 4, color: BRAND.sub, fontSize: 12, lineHeight: 1.4 }}>
-                      <em>{explanations[c.id]}</em>
-                    </div>
-                  )}
-                </div>
-              </div>
-            );
-          })}
+          {comps.map((c) => (
+            <CompReviewRow
+              key={c.id}
+              comp={c}
+              studentDecision={decisions[c.id]}
+              studentRank={selections.indexOf(c.id)}
+              modelVerdict={verdicts[c.id]}
+              modelRank={ranking.indexOf(c.id)}
+              modelExplanation={explanations[c.id]}
+              perspective="student"
+            />
+          ))}
         </div>
 
         {/* Justification — student vs model */}
@@ -1315,50 +1340,106 @@ function ComparablesField({ field, mode, value, onChange, model }) {
     );
   }
 
-  // ── REVIEW MODE (admin side-by-side) ───────────────────
+  // ── REVIEW MODE (admin reviewing a student) ────────────
+  // Mirrors locked mode's structure but labeled "Student" instead of
+  // "Your". Admin gets full comp-by-comp breakdown with the student's
+  // accept/reject decision (and rejection reason if any) next to the
+  // model's, plus the model's per-comp explanation, plus a tally summary
+  // and side-by-side justifications at the bottom.
   const md = model?.data || {};
   const verdicts = md.verdicts || {};
+  const explanations = md.explanations || {};
   const ranking = Array.isArray(md.ranking) ? md.ranking : [];
 
-  // Compact tally for quick admin scan
+  // Tally summary for fast admin scanning
   const totalComps = comps.length;
-  const correctVerdicts = comps.filter((c) => {
+  const decidedComps = comps.filter((c) => decisions[c.id]?.verdict).length;
+  const correctDecisions = comps.filter((c) => {
     const sv = decisions[c.id]?.verdict;
     return sv && verdicts[c.id] && sv === verdicts[c.id];
   }).length;
-  const studentTop3 = selections.slice(0, 3);
-  const modelTop3 = ranking.slice(0, 3);
-  const top3Match = studentTop3.filter((id) => modelTop3.includes(id)).length;
+  const top3Match = selections
+    .slice(0, 3)
+    .filter((id) => ranking.slice(0, 3).includes(id)).length;
 
   return (
-    <ReviewShell field={field}>
-      <div style={studentAnswerBoxStyle}>
-        <div style={{ ...sectionLabelStyle, color: BRAND.sub, fontSize: 10 }}>Student</div>
-        <div style={{ fontSize: 12, marginBottom: 6 }}>
-          Verdicts correct: <strong>{correctVerdicts}/{totalComps}</strong>
-          {' · '}Top-3 overlap: <strong>{top3Match}/3</strong>
+    <FieldShell field={field}>
+      <SubjectPanel subject={subject} />
+
+      {/* Tally summary card */}
+      {totalComps > 0 && (
+        <div
+          style={{
+            background: '#f9fafb',
+            border: `1px solid ${BRAND.line}`,
+            borderRadius: 8,
+            padding: '10px 14px',
+            marginBottom: 12,
+            display: 'grid',
+            gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))',
+            gap: 12,
+            fontSize: 13,
+          }}
+        >
+          <div>
+            <div style={{ ...sectionLabelStyle, color: BRAND.sub, fontSize: 10 }}>
+              Decisions correct
+            </div>
+            <div style={{ color: BRAND.ink, fontWeight: 700, fontSize: 16 }}>
+              {correctDecisions} / {totalComps}
+            </div>
+          </div>
+          <div>
+            <div style={{ ...sectionLabelStyle, color: BRAND.sub, fontSize: 10 }}>
+              Top-3 overlap with model
+            </div>
+            <div style={{ color: BRAND.ink, fontWeight: 700, fontSize: 16 }}>
+              {top3Match} / 3
+            </div>
+          </div>
+          <div>
+            <div style={{ ...sectionLabelStyle, color: BRAND.sub, fontSize: 10 }}>
+              Comps decided
+            </div>
+            <div style={{ color: BRAND.ink, fontWeight: 700, fontSize: 16 }}>
+              {decidedComps} / {totalComps}
+            </div>
+          </div>
         </div>
-        <div style={{ fontSize: 12, marginBottom: 6 }}>
-          <span style={{ color: BRAND.sub }}>Picks:</span>{' '}
-          {studentTop3.length ? studentTop3.map((id, i) => `#${i + 1} ${id}`).join('  ') : <em>(none)</em>}
-        </div>
-        <div style={{ fontSize: 12, color: BRAND.sub, marginBottom: 4 }}>Justification:</div>
-        <div style={{ fontSize: 13, whiteSpace: 'pre-wrap' }}>
-          {justification || emptyBox('(empty)')}
-        </div>
+      )}
+
+      <div style={{ ...sectionLabelStyle, color: BRAND.sub, marginBottom: 8 }}>
+        Comp-by-Comp Review
       </div>
-      <div style={modelAnswerBoxStyle}>
-        <div style={{ ...sectionLabelStyle, color: BRAND.ok, fontSize: 10 }}>Model</div>
-        <div style={{ fontSize: 12, marginBottom: 6 }}>
-          <span style={{ color: BRAND.sub }}>Picks:</span>{' '}
-          {modelTop3.length ? modelTop3.map((id, i) => `#${i + 1} ${id}`).join('  ') : <em>(none)</em>}
-        </div>
-        <div style={{ fontSize: 12, color: BRAND.sub, marginBottom: 4 }}>Justification:</div>
-        <div style={{ fontSize: 13, whiteSpace: 'pre-wrap' }}>
-          {md.justification || emptyBox('(none)')}
-        </div>
+      <div style={{ display: 'grid', gap: 10, marginBottom: 14 }}>
+        {comps.map((c) => (
+          <CompReviewRow
+            key={c.id}
+            comp={c}
+            studentDecision={decisions[c.id]}
+            studentRank={selections.indexOf(c.id)}
+            modelVerdict={verdicts[c.id]}
+            modelRank={ranking.indexOf(c.id)}
+            modelExplanation={explanations[c.id]}
+            perspective="admin"
+          />
+        ))}
       </div>
-    </ReviewShell>
+
+      {/* Justifications — student vs model, side by side */}
+      <div style={{ ...sectionLabelStyle, color: BRAND.sub, marginBottom: 6 }}>
+        Student Justification
+      </div>
+      <div style={{ ...studentAnswerBoxStyle, marginBottom: 10, whiteSpace: 'pre-wrap' }}>
+        {justification || emptyBox('(no justification submitted)')}
+      </div>
+      <div style={{ ...sectionLabelStyle, color: BRAND.ok, marginBottom: 6 }}>
+        Model Justification
+      </div>
+      <div style={{ ...modelAnswerBoxStyle, whiteSpace: 'pre-wrap' }}>
+        {md.justification || emptyBox('(none)')}
+      </div>
+    </FieldShell>
   );
 }
 
