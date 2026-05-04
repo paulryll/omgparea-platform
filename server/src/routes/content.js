@@ -158,6 +158,76 @@ function validateAnswer(field, raw) {
     return { ok: true, text: optionalText, data: { selected, justifications } };
   }
 
+  if (type === 'comparables') {
+    // Section 3 (Comparable Selection & Analysis) workflow.
+    // Shape: { decisions: { compId -> {verdict, reason?} },
+    //          selections: [compId,...3],
+    //          justification: string >= 40 chars }
+    if (
+      !raw.decisions ||
+      typeof raw.decisions !== 'object' ||
+      Array.isArray(raw.decisions)
+    ) {
+      return { ok: false, error: `"${field.label}" requires a decisions object` };
+    }
+    for (const [compId, decision] of Object.entries(raw.decisions)) {
+      if (!decision || typeof decision !== 'object' || Array.isArray(decision)) {
+        return {
+          ok: false,
+          error: `"${field.label}" decision for ${compId} must be an object`,
+        };
+      }
+      if (decision.verdict !== 'accept' && decision.verdict !== 'reject') {
+        return {
+          ok: false,
+          error: `"${field.label}" decision for ${compId} must have verdict 'accept' or 'reject'`,
+        };
+      }
+      if (decision.verdict === 'reject') {
+        if (typeof decision.reason !== 'string' || !decision.reason.trim()) {
+          return {
+            ok: false,
+            error: `"${field.label}" rejection of ${compId} requires a non-empty reason`,
+          };
+        }
+      }
+    }
+
+    if (!Array.isArray(raw.selections)) {
+      return { ok: false, error: `"${field.label}" requires a selections array` };
+    }
+    if (raw.selections.length !== 3) {
+      return {
+        ok: false,
+        error: `"${field.label}" requires exactly 3 selections (got ${raw.selections.length})`,
+      };
+    }
+    if (!raw.selections.every((s) => typeof s === 'string' && s.length > 0)) {
+      return { ok: false, error: `"${field.label}" selections must be comp ID strings` };
+    }
+
+    const justification = typeof raw.justification === 'string' ? raw.justification : '';
+    if (justification.trim().length < 40) {
+      return {
+        ok: false,
+        error: `"${field.label}" justification must be at least 40 characters`,
+      };
+    }
+
+    // Justification lives inside data, not in answer_text. Other field types
+    // use answer_text for free-form commentary; for comparables, the
+    // justification is part of the structured answer itself.
+    return {
+      ok: true,
+      text: null,
+      data: {
+        decisions: raw.decisions,
+        selections: raw.selections,
+        justification,
+      },
+    };
+  }
+
   return { ok: false, error: `Unknown field type: ${type}` };
 }
 
@@ -456,10 +526,13 @@ router.get('/scenarios/:id', requireAuth, async (req, res) => {
 //
 // StructuredAnswer shapes (all may include an optional
 // "text" field for free-form commentary):
-//   checklist:   { selected: number[] }
-//   select:      { selected: number | null }
-//   parameters:  { values: { fieldName: string } }
-//   approaches:  { selected: number[], justifications: string[] }
+//   checklist:    { selected: number[] }
+//   select:       { selected: number | null }
+//   parameters:   { values: { fieldName: string } }
+//   approaches:   { selected: number[], justifications: string[] }
+//   comparables:  { decisions: { compId: {verdict, reason?} },
+//                   selections: [compId,...3],
+//                   justification: string (≥40 chars) }
 //
 // For text fields, plain strings continue to work as before.
 //
