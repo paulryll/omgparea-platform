@@ -3506,6 +3506,126 @@ export function isAnswerComplete(field, value) {
 }
 
 // -----------------------------------------------------------
+// whatIsMissingFor — returns null if the field is complete, or
+// a short human-readable string describing what's missing. Used
+// by ScenarioView to render specific hints next to the disabled
+// Submit button instead of a generic "missing fields" error.
+// -----------------------------------------------------------
+export function whatIsMissingFor(field, value) {
+  switch (field.type) {
+    case 'checklist':
+      return (Array.isArray(value?.selected) && value.selected.length > 0)
+        ? null
+        : 'no selections';
+    case 'select':
+      return Number.isInteger(value?.selected) ? null : 'no selection';
+    case 'parameters': {
+      const defs = field.options?.fields || [];
+      if (defs.length === 0) return null;
+      const values = value?.values || {};
+      const missing = defs.filter((f) => {
+        const v = values[f.name];
+        return v == null || String(v).trim() === '';
+      });
+      return missing.length === 0 ? null : `missing: ${missing.map((f) => f.label).join(', ')}`;
+    }
+    case 'approaches': {
+      const opts = field.options?.options || [];
+      if (!Array.isArray(value?.selected) || value.selected.length === 0) {
+        return 'no approach selected';
+      }
+      const justifs = value?.justifications || [];
+      const missingNames = [];
+      for (let i = 0; i < opts.length; i++) {
+        const j = justifs[i];
+        if (!j || !j.trim()) missingNames.push(opts[i]);
+      }
+      return missingNames.length === 0
+        ? null
+        : `missing justifications: ${missingNames.join(', ')}`;
+    }
+    case 'comparables': {
+      const comps = field.options?.comps || [];
+      const decisions = value?.decisions || {};
+      const undecided = comps.filter((c) => {
+        const d = decisions[c.id];
+        if (!d || !d.verdict) return true;
+        if (d.verdict === 'reject' && (!d.reason || !d.reason.trim())) return true;
+        return false;
+      });
+      if (undecided.length > 0) {
+        return `${undecided.length} comp${undecided.length !== 1 ? 's' : ''} need a decision`;
+      }
+      const selections = Array.isArray(value?.selections) ? value.selections : [];
+      if (selections.length !== 3) {
+        return `pick exactly 3 (you have ${selections.length})`;
+      }
+      const justification = typeof value?.justification === 'string' ? value.justification : '';
+      if (justification.trim().length < 40) {
+        return `justification needs 40+ chars (have ${justification.trim().length})`;
+      }
+      return null;
+    }
+    case 'adjustment_grid': {
+      const opts = field.options || {};
+      const features = Array.isArray(opts.features) ? opts.features : [];
+      const applicable = (opts.step3 && opts.step3.applicable) || {};
+      const minChars = (opts.step3 && opts.step3.support_min_chars) || 15;
+      const recon = (value && value.step2_reconciliation) || {};
+      const adj = (value && value.step3_adjustments) || {};
+      const sup = (value && value.step3_support) || {};
+      const reasons = [];
+
+      // Step 2 reconciliation
+      const missingRecon = features.filter((f) => {
+        const v = recon[f.key];
+        return v == null || String(v).trim() === '';
+      });
+      if (missingRecon.length > 0) {
+        reasons.push(
+          `Step 2 reconciliation (${missingRecon.map((f) => f.label).join(', ')})`
+        );
+      }
+
+      // Step 3 adjustments
+      let totalCells = 0;
+      let missingCells = 0;
+      for (const compId of Object.keys(applicable)) {
+        for (const fk of (applicable[compId] || [])) {
+          totalCells++;
+          const v = adj[compId] && adj[compId][fk];
+          if (v == null || String(v).trim() === '') missingCells++;
+        }
+      }
+      if (missingCells > 0) {
+        reasons.push(`Step 3 adjustments (${missingCells} of ${totalCells} empty)`);
+      }
+
+      // Step 3 support
+      const missingSupport = [];
+      for (const f of features) {
+        const s = sup[f.key];
+        if (!s || !s.method || !String(s.method).trim()) {
+          missingSupport.push(`${f.label} method`);
+        } else if (!s.rationale || String(s.rationale).trim().length < minChars) {
+          missingSupport.push(`${f.label} rationale (${minChars}+ chars)`);
+        }
+      }
+      if (missingSupport.length > 0) {
+        reasons.push(`Step 3 support (${missingSupport.join('; ')})`);
+      }
+
+      return reasons.length === 0 ? null : reasons.join(' • ');
+    }
+    case 'text':
+    default: {
+      const t = typeof value === 'string' ? value : (value?.text ?? '');
+      return (typeof t === 'string' && t.trim() !== '') ? null : 'empty';
+    }
+  }
+}
+
+// -----------------------------------------------------------
 // submitValueFor — produce the value to send up to the API
 // for this field. Text fields submit as plain strings (legacy
 // shape); structured fields submit as their object.
