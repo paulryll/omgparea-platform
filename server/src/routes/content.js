@@ -228,6 +228,77 @@ function validateAnswer(field, raw) {
     };
   }
 
+  if (type === 'adjustment_grid') {
+    // Section 4 (Adjustment Analysis) workflow.
+    // Shape: {
+    //   step1_flags:          { compId -> [featureKey, ...] },
+    //   step2_tables:         { tabKey -> { featureKey -> { ...student inputs } } },
+    //   step2_reconciliation: { featureKey -> stringValue },
+    //   step3_adjustments:    { compId -> { featureKey -> stringValue } },
+    //   step3_support:        { featureKey -> { method: string, rationale: string≥15 } }
+    // }
+    //
+    // Detailed completeness (every applicable comp has an adjustment, every
+    // feature has a reconciliation value, etc.) is gated by the client
+    // renderer because it requires reading the per-scenario field_options_override
+    // to know which comps and features are applicable. Here we validate shape
+    // and the per-feature support quality requirements.
+    const requiredKeys = [
+      'step1_flags',
+      'step2_tables',
+      'step2_reconciliation',
+      'step3_adjustments',
+      'step3_support',
+    ];
+    for (const k of requiredKeys) {
+      const v = raw[k];
+      if (!v || typeof v !== 'object' || Array.isArray(v)) {
+        return {
+          ok: false,
+          error: `"${field.label}" requires a ${k} object`,
+        };
+      }
+    }
+
+    // Every entry in step3_support must have a method (non-empty string)
+    // and a rationale of at least 15 characters. This mirrors the per-item
+    // gating in the artifacts (the "Support Your Adjustments" cards).
+    for (const [featKey, support] of Object.entries(raw.step3_support)) {
+      if (!support || typeof support !== 'object' || Array.isArray(support)) {
+        return {
+          ok: false,
+          error: `"${field.label}" support for ${featKey} must be an object`,
+        };
+      }
+      const method = typeof support.method === 'string' ? support.method.trim() : '';
+      if (!method) {
+        return {
+          ok: false,
+          error: `"${field.label}" support for ${featKey} requires a method selection`,
+        };
+      }
+      const rationale = typeof support.rationale === 'string' ? support.rationale : '';
+      if (rationale.trim().length < 15) {
+        return {
+          ok: false,
+          error: `"${field.label}" rationale for ${featKey} must be at least 15 characters`,
+        };
+      }
+    }
+
+    return {
+      ok: true,
+      text: null,
+      data: {
+        step1_flags:          raw.step1_flags,
+        step2_tables:         raw.step2_tables,
+        step2_reconciliation: raw.step2_reconciliation,
+        step3_adjustments:    raw.step3_adjustments,
+        step3_support:        raw.step3_support,
+      },
+    };
+  }
+
   return { ok: false, error: `Unknown field type: ${type}` };
 }
 
@@ -533,6 +604,9 @@ router.get('/scenarios/:id', requireAuth, async (req, res) => {
 //   comparables:  { decisions: { compId: {verdict, reason?} },
 //                   selections: [compId,...3],
 //                   justification: string (≥40 chars) }
+//   adjustment_grid: { step1_flags, step2_tables,
+//                      step2_reconciliation, step3_adjustments,
+//                      step3_support }  — see validator for detail
 //
 // For text fields, plain strings continue to work as before.
 //
