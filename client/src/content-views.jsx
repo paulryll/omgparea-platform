@@ -33,6 +33,7 @@ import {
   FieldRenderer,
   blankAnswerFor,
   isAnswerComplete,
+  whatIsMissingFor,
   submitValueFor,
 } from './field-types.jsx';
 
@@ -329,15 +330,24 @@ export function ScenarioView({ scenarioId, onBack }) {
       .catch((e) => setErr(e.message));
   }, [scenarioId]);
 
+  // Compute which fields are still incomplete on every render. Drives the
+  // disabled state of the page-level Submit button and the per-field
+  // hint list shown below it.
+  const incompleteFields = data
+    ? data.fields
+        .map((f) => ({ field: f, reason: whatIsMissingFor(f, answers[f.key]) }))
+        .filter((x) => x.reason !== null)
+    : [];
+  const isFormComplete = data != null && incompleteFields.length === 0;
+
   const handleSubmit = async () => {
     if (!data) return;
 
-    const missing = data.fields.filter((f) => !isAnswerComplete(f, answers[f.key]));
-    if (missing.length > 0) {
+    // Defensive: button should be disabled if incomplete, but check anyway
+    // in case state is stale or someone calls this programmatically.
+    if (incompleteFields.length > 0) {
       setSubmitError(
-        `Please complete all ${data.fields.length} fields before submitting. Missing: ${missing
-          .map((f) => f.label)
-          .join(', ')}`
+        `Please complete all ${data.fields.length} field${data.fields.length !== 1 ? 's' : ''} before submitting.`
       );
       return;
     }
@@ -543,20 +553,49 @@ export function ScenarioView({ scenarioId, onBack }) {
           <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
             <button
               onClick={handleSubmit}
-              disabled={submitting}
+              disabled={submitting || !isFormComplete}
               style={{
                 ...btnPrimary,
                 padding: '12px 20px',
                 fontSize: 15,
-                opacity: submitting ? 0.6 : 1,
+                opacity: (submitting || !isFormComplete) ? 0.5 : 1,
+                cursor: (submitting || !isFormComplete) ? 'not-allowed' : 'pointer',
               }}
             >
-              {submitting ? 'Submitting…' : 'Submit Answers (Final — Cannot Be Changed)'}
+              {submitting
+                ? 'Submitting…'
+                : isFormComplete
+                  ? 'Submit Answers (Final — Cannot Be Changed)'
+                  : `Complete all steps to enable Submit (${incompleteFields.length} field${incompleteFields.length !== 1 ? 's' : ''} incomplete)`}
             </button>
-            <span style={{ fontSize: 12, color: BRAND.sub }}>
-              You'll see the model answers immediately after submitting.
-            </span>
+            {isFormComplete && (
+              <span style={{ fontSize: 12, color: BRAND.sub }}>
+                You'll see the model answers immediately after submitting.
+              </span>
+            )}
           </div>
+          {!isFormComplete && incompleteFields.length > 0 && (
+            <div
+              style={{
+                marginTop: 12,
+                padding: '10px 12px',
+                background: '#fff8e1',
+                border: `1px solid #f59e0b`,
+                borderRadius: 6,
+                fontSize: 12,
+                color: '#78350f',
+              }}
+            >
+              <div style={{ fontWeight: 700, marginBottom: 6 }}>What's still needed:</div>
+              <ul style={{ margin: 0, paddingLeft: 18, lineHeight: 1.6 }}>
+                {incompleteFields.map(({ field, reason }) => (
+                  <li key={field.key}>
+                    <strong>{field.label}:</strong> {reason}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
         </Card>
       )}
     </>
