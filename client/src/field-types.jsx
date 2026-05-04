@@ -769,6 +769,600 @@ function ApproachesDisplay({ options, selected, justifications, small, tone }) {
 }
 
 // ═══════════════════════════════════════════════════════════
+// COMPARABLES (Section 3)
+// ═══════════════════════════════════════════════════════════
+//
+// A 3-step workflow over a scenario-specific pool of 7-8
+// candidate comparable sales. Used by Section M2-S3 only.
+//
+// Storage shapes:
+//   field.options = {
+//     comps: [{id, addr, prox, sub, price, date, style, bed, bath,
+//              gla, site, yr, cond, qual, conc, gar, txn, warn}, ...],
+//     rejection_reasons: [string, ...],
+//     subject: {address, subdivision, style, bed, bath, gla, site,
+//               yr, cond, qual, garage, bsmt, pool}
+//   }
+//   value (student answer) = {
+//     decisions: { C1: {verdict:'accept'} | {verdict:'reject', reason:'...'} },
+//     selections: ['C1','C2','C3'],   // ordered top 3 of accepted comps
+//     justification: 'free-form text (≥40 chars)'
+//   }
+//   model.data (revealed post-submit) = {
+//     verdicts: { C1:'accept', ... },
+//     ranking: ['C1','C2','C3'],
+//     explanations: { C1:'...', ... },
+//     justification: 'overall model reasoning'
+//   }
+// -----------------------------------------------------------
+
+const fmtPrice = (n) => {
+  if (n == null || n === '') return '';
+  const num = typeof n === 'number' ? n : Number(n);
+  return isNaN(num) ? String(n) : '$' + num.toLocaleString();
+};
+const fmtGLA = (g) => {
+  if (g == null || g === '') return '';
+  if (typeof g === 'number') return g.toLocaleString() + ' SF';
+  return String(g);
+};
+
+const compStatLabelStyle = {
+  fontSize: 9,
+  color: BRAND.sub,
+  textTransform: 'uppercase',
+  letterSpacing: 0.6,
+  fontWeight: 700,
+};
+const compStatValueStyle = {
+  fontSize: 12,
+  color: BRAND.ink,
+};
+
+function SubjectPanel({ subject }) {
+  if (!subject || Object.keys(subject).length === 0) return null;
+  const stats = [
+    ['Style', subject.style],
+    ['Bed / Bath', `${subject.bed ?? ''} / ${subject.bath ?? ''}`],
+    ['GLA', fmtGLA(subject.gla)],
+    ['Site', subject.site],
+    ['Year Built', subject.yr],
+    ['Cond / Qual', `${subject.cond ?? ''} / ${subject.qual ?? ''}`],
+    ['Garage', subject.garage],
+    ['Basement', subject.bsmt],
+    ['Pool', subject.pool],
+  ].filter(([, v]) => v != null && v !== '' && v !== ' / ');
+  return (
+    <div
+      style={{
+        background: '#fdf2f8',
+        border: `1px solid ${BRAND.pink}`,
+        borderRadius: 8,
+        padding: '12px 14px',
+        marginBottom: 14,
+      }}
+    >
+      <div style={{ ...sectionLabelStyle, color: BRAND.pink, marginBottom: 6 }}>Subject Property</div>
+      <div style={{ fontWeight: 700, fontSize: 14, color: BRAND.ink, marginBottom: 2 }}>
+        {subject.address}
+      </div>
+      {subject.subdivision && (
+        <div style={{ fontSize: 12, color: BRAND.sub, marginBottom: 8 }}>{subject.subdivision}</div>
+      )}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: '4px 14px' }}>
+        {stats.map(([k, v]) => (
+          <div key={k}>
+            <div style={compStatLabelStyle}>{k}</div>
+            <div style={compStatValueStyle}>{v}</div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function CompCardHeader({ comp }) {
+  return (
+    <div
+      style={{
+        padding: '10px 12px',
+        borderBottom: `1px solid ${BRAND.line}`,
+        display: 'flex',
+        justifyContent: 'space-between',
+        alignItems: 'flex-start',
+        gap: 10,
+      }}
+    >
+      <div style={{ minWidth: 0 }}>
+        <span
+          style={{
+            fontSize: 10,
+            fontWeight: 700,
+            background: '#f3f4f6',
+            color: BRAND.sub,
+            padding: '2px 7px',
+            borderRadius: 4,
+          }}
+        >
+          {comp.id}
+        </span>
+        <div style={{ fontWeight: 700, fontSize: 14, marginTop: 4, color: BRAND.ink }}>{comp.addr}</div>
+        <div style={{ fontSize: 11, color: BRAND.sub, marginTop: 1 }}>
+          {comp.prox} · {comp.sub}
+        </div>
+      </div>
+      <div style={{ textAlign: 'right', flexShrink: 0 }}>
+        <div style={{ fontWeight: 700, fontSize: 15, color: BRAND.ink }}>{fmtPrice(comp.price)}</div>
+        <div style={{ fontSize: 11, color: BRAND.sub }}>{comp.date}</div>
+      </div>
+    </div>
+  );
+}
+
+function CompCardBody({ comp }) {
+  const stats = [
+    ['Style', comp.style],
+    ['Bed / Bath', `${comp.bed ?? ''} / ${comp.bath ?? ''}`],
+    ['GLA', fmtGLA(comp.gla)],
+    ['Site', comp.site],
+    ['Year Built', comp.yr],
+    ['Cond / Qual', `${comp.cond ?? ''} / ${comp.qual ?? ''}`],
+    ['Garage', comp.gar],
+    ['Concessions', comp.conc],
+  ].filter(([, v]) => v != null && v !== '' && v !== ' / ');
+  return (
+    <div style={{ padding: '8px 12px', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '5px 14px' }}>
+      {stats.map(([k, v]) => (
+        <div key={k}>
+          <div style={compStatLabelStyle}>{k}</div>
+          <div style={compStatValueStyle}>{v}</div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function CompCardTxnFooter({ comp }) {
+  if (!comp.txn) return null;
+  const isWarn = !!comp.warn;
+  return (
+    <div
+      style={{
+        padding: '6px 12px',
+        borderTop: `1px solid ${BRAND.line}`,
+        fontSize: 11,
+        color: isWarn ? '#b36000' : BRAND.sub,
+        fontWeight: isWarn ? 700 : 400,
+        background: isWarn ? '#fff8e1' : 'transparent',
+      }}
+    >
+      {isWarn ? '⚠ ' : ''}
+      {comp.txn}
+    </div>
+  );
+}
+
+function ComparablesField({ field, mode, value, onChange, model }) {
+  const opts = field.options || {};
+  const comps = Array.isArray(opts.comps) ? opts.comps : [];
+  const rejectionReasons = Array.isArray(opts.rejection_reasons) ? opts.rejection_reasons : [];
+  const subject = opts.subject || {};
+
+  const decisions = (value && typeof value.decisions === 'object' && value.decisions) || {};
+  const selections = Array.isArray(value?.selections) ? value.selections : [];
+  const justification = typeof value?.justification === 'string' ? value.justification : '';
+
+  // ── Helpers ────────────────────────────────────────────
+  const setVerdict = (compId, verdict) => {
+    const next = { ...decisions };
+    if (verdict === 'accept') {
+      next[compId] = { verdict: 'accept' };
+    } else {
+      // Preserve any existing reason if already a reject
+      const prior = decisions[compId];
+      next[compId] = { verdict: 'reject', reason: prior?.reason || '' };
+    }
+    // If this comp was previously selected and is now rejected, drop it
+    let nextSelections = selections;
+    if (verdict === 'reject') {
+      nextSelections = selections.filter((id) => id !== compId);
+    }
+    onChange({ ...value, decisions: next, selections: nextSelections, justification });
+  };
+
+  const setReason = (compId, reason) => {
+    const next = { ...decisions };
+    next[compId] = { verdict: 'reject', reason };
+    onChange({ ...value, decisions: next, selections, justification });
+  };
+
+  const toggleSelect = (compId) => {
+    if (selections.includes(compId)) {
+      onChange({ ...value, decisions, selections: selections.filter((id) => id !== compId), justification });
+    } else if (selections.length < 3) {
+      onChange({ ...value, decisions, selections: [...selections, compId], justification });
+    }
+  };
+
+  const setJust = (text) => {
+    onChange({ ...value, decisions, selections, justification: text });
+  };
+
+  const acceptedIds = comps.filter((c) => decisions[c.id]?.verdict === 'accept').map((c) => c.id);
+  const allDecided = comps.every((c) => {
+    const d = decisions[c.id];
+    return d && d.verdict && (d.verdict !== 'reject' || (d.reason && d.reason.trim()));
+  });
+
+  // ── EDIT MODE ──────────────────────────────────────────
+  if (mode === 'edit') {
+    const showSelectStep = acceptedIds.length >= 3;
+    const showJustifyStep = selections.length === 3;
+    return (
+      <FieldShell field={field}>
+        <SubjectPanel subject={subject} />
+
+        {/* STEP 1 — Screen */}
+        <div style={{ marginBottom: 16 }}>
+          <div style={{ ...sectionLabelStyle, marginBottom: 8, color: BRAND.ink }}>
+            Step 1 — Screen each candidate comp
+          </div>
+          <div style={{ fontSize: 12, color: BRAND.sub, marginBottom: 10 }}>
+            Accept or reject each comp. Rejections require a reason.
+          </div>
+          <div style={{ display: 'grid', gap: 10 }}>
+            {comps.map((c) => {
+              const d = decisions[c.id];
+              const isAccept = d?.verdict === 'accept';
+              const isReject = d?.verdict === 'reject';
+              return (
+                <div
+                  key={c.id}
+                  style={{
+                    border: `2px solid ${
+                      isAccept ? BRAND.ok : isReject ? '#c62828' : BRAND.line
+                    }`,
+                    borderRadius: 8,
+                    background: isAccept ? BRAND.okBg : isReject ? '#fdecea' : '#fff',
+                    overflow: 'hidden',
+                  }}
+                >
+                  <CompCardHeader comp={c} />
+                  <CompCardBody comp={c} />
+                  <CompCardTxnFooter comp={c} />
+                  <div
+                    style={{
+                      padding: '8px 12px',
+                      borderTop: `1px solid ${BRAND.line}`,
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: 6,
+                    }}
+                  >
+                    <div style={{ display: 'flex', gap: 6 }}>
+                      <button
+                        type="button"
+                        onClick={() => setVerdict(c.id, 'accept')}
+                        style={{
+                          flex: 1,
+                          padding: '7px 0',
+                          borderRadius: 6,
+                          border: `1px solid ${isAccept ? BRAND.ok : BRAND.line}`,
+                          cursor: 'pointer',
+                          fontSize: 12,
+                          fontWeight: 700,
+                          background: isAccept ? BRAND.ok : '#fff',
+                          color: isAccept ? '#fff' : BRAND.sub,
+                        }}
+                      >
+                        Accept
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setVerdict(c.id, 'reject')}
+                        style={{
+                          flex: 1,
+                          padding: '7px 0',
+                          borderRadius: 6,
+                          border: `1px solid ${isReject ? '#c62828' : BRAND.line}`,
+                          cursor: 'pointer',
+                          fontSize: 12,
+                          fontWeight: 700,
+                          background: isReject ? '#c62828' : '#fff',
+                          color: isReject ? '#fff' : BRAND.sub,
+                        }}
+                      >
+                        Reject
+                      </button>
+                    </div>
+                    {isReject && (
+                      <select
+                        value={d?.reason || ''}
+                        onChange={(e) => setReason(c.id, e.target.value)}
+                        style={{
+                          width: '100%',
+                          padding: '6px 8px',
+                          borderRadius: 6,
+                          border: `1px solid ${d?.reason ? BRAND.line : '#c62828'}`,
+                          fontSize: 12,
+                          background: '#fff',
+                          color: BRAND.ink,
+                        }}
+                      >
+                        <option value="">— Select a rejection reason —</option>
+                        {rejectionReasons.map((r, i) => (
+                          <option key={i} value={r}>
+                            {r}
+                          </option>
+                        ))}
+                      </select>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* STEP 2 — Select Top 3 (gated until ≥3 accepted) */}
+        {showSelectStep ? (
+          <div style={{ marginBottom: 16 }}>
+            <div style={{ ...sectionLabelStyle, marginBottom: 8, color: BRAND.ink }}>
+              Step 2 — Pick your best three (in order)
+            </div>
+            <div style={{ fontSize: 12, color: BRAND.sub, marginBottom: 10 }}>
+              Click an accepted comp to add it. Click again to remove. Order matters: best first.
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))', gap: 8 }}>
+              {comps
+                .filter((c) => decisions[c.id]?.verdict === 'accept')
+                .map((c) => {
+                  const rank = selections.indexOf(c.id);
+                  const isPicked = rank !== -1;
+                  return (
+                    <button
+                      key={c.id}
+                      type="button"
+                      onClick={() => toggleSelect(c.id)}
+                      disabled={!isPicked && selections.length >= 3}
+                      style={{
+                        textAlign: 'left',
+                        padding: '8px 10px',
+                        borderRadius: 6,
+                        border: `2px solid ${isPicked ? BRAND.pink : BRAND.line}`,
+                        background: isPicked ? '#fdf2f8' : '#fff',
+                        cursor: !isPicked && selections.length >= 3 ? 'not-allowed' : 'pointer',
+                        opacity: !isPicked && selections.length >= 3 ? 0.5 : 1,
+                      }}
+                    >
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 2 }}>
+                        <span style={{ fontSize: 11, fontWeight: 700, color: BRAND.sub }}>{c.id}</span>
+                        {isPicked && (
+                          <span
+                            style={{
+                              fontSize: 10,
+                              fontWeight: 700,
+                              color: '#fff',
+                              background: BRAND.pink,
+                              padding: '1px 7px',
+                              borderRadius: 10,
+                            }}
+                          >
+                            #{rank + 1}
+                          </span>
+                        )}
+                      </div>
+                      <div style={{ fontSize: 12, fontWeight: 600, color: BRAND.ink, lineHeight: 1.3 }}>{c.addr}</div>
+                      <div style={{ fontSize: 11, color: BRAND.sub, marginTop: 2 }}>{fmtPrice(c.price)}</div>
+                    </button>
+                  );
+                })}
+            </div>
+          </div>
+        ) : acceptedIds.length > 0 ? (
+          <div
+            style={{
+              padding: 10,
+              fontSize: 12,
+              color: BRAND.sub,
+              fontStyle: 'italic',
+              background: '#fafafa',
+              borderRadius: 6,
+              marginBottom: 16,
+            }}
+          >
+            Step 2 (Select Top 3) unlocks once you've accepted at least 3 comps. Currently accepted: {acceptedIds.length}/3.
+          </div>
+        ) : null}
+
+        {/* STEP 3 — Justify (gated until exactly 3 selected) */}
+        {showJustifyStep ? (
+          <div>
+            <div style={{ ...sectionLabelStyle, marginBottom: 8, color: BRAND.ink }}>
+              Step 3 — Justify your selections and rejections
+            </div>
+            <div style={{ fontSize: 12, color: BRAND.sub, marginBottom: 8 }}>
+              Explain why you picked your top 3 and why the rejected comps weren't appropriate.
+            </div>
+            <textarea
+              value={justification}
+              onChange={(e) => setJust(e.target.value)}
+              placeholder="Your reasoning..."
+              rows={5}
+              style={{
+                width: '100%',
+                boxSizing: 'border-box',
+                padding: '10px 12px',
+                borderRadius: 6,
+                border: `1px solid ${BRAND.line}`,
+                fontSize: 14,
+                lineHeight: 1.5,
+                fontFamily: 'inherit',
+                resize: 'vertical',
+                background: '#fff',
+                color: BRAND.ink,
+              }}
+            />
+            <div style={{ fontSize: 11, color: BRAND.sub, marginTop: 4, textAlign: 'right' }}>
+              {justification.length} characters {justification.length < 40 ? '(min 40)' : ''}
+            </div>
+          </div>
+        ) : showSelectStep ? (
+          <div
+            style={{
+              padding: 10,
+              fontSize: 12,
+              color: BRAND.sub,
+              fontStyle: 'italic',
+              background: '#fafafa',
+              borderRadius: 6,
+            }}
+          >
+            Step 3 (Justify) unlocks once you've selected exactly 3 comps. Currently selected: {selections.length}/3.
+          </div>
+        ) : null}
+      </FieldShell>
+    );
+  }
+
+  // ── LOCKED MODE (post-submit, model revealed) ─────────
+  if (mode === 'locked') {
+    const md = model?.data || {};
+    const verdicts = md.verdicts || {};
+    const explanations = md.explanations || {};
+    const ranking = Array.isArray(md.ranking) ? md.ranking : [];
+    return (
+      <FieldShell field={field}>
+        <SubjectPanel subject={subject} />
+
+        <div style={{ ...sectionLabelStyle, color: BRAND.sub, marginBottom: 8 }}>Comp-by-Comp Review</div>
+        <div style={{ display: 'grid', gap: 10, marginBottom: 14 }}>
+          {comps.map((c) => {
+            const studentVerdict = decisions[c.id]?.verdict;
+            const modelVerdict = verdicts[c.id];
+            const matched = studentVerdict && modelVerdict && studentVerdict === modelVerdict;
+            const studentRank = selections.indexOf(c.id);
+            const modelRank = ranking.indexOf(c.id);
+            return (
+              <div
+                key={c.id}
+                style={{
+                  border: `1px solid ${BRAND.line}`,
+                  borderLeft: `4px solid ${matched ? BRAND.ok : '#c62828'}`,
+                  borderRadius: 8,
+                  background: '#fff',
+                  overflow: 'hidden',
+                }}
+              >
+                <CompCardHeader comp={c} />
+                <CompCardBody comp={c} />
+                <CompCardTxnFooter comp={c} />
+                <div style={{ padding: '10px 12px', borderTop: `1px solid ${BRAND.line}`, fontSize: 12, display: 'grid', gap: 4 }}>
+                  <div>
+                    <span style={{ color: BRAND.sub }}>Your verdict:</span>{' '}
+                    <strong style={{ color: BRAND.ink }}>{studentVerdict || '(none)'}</strong>
+                    {studentRank !== -1 && (
+                      <span style={{ marginLeft: 8, color: BRAND.pink, fontWeight: 700 }}>
+                        Your pick #{studentRank + 1}
+                      </span>
+                    )}
+                  </div>
+                  <div>
+                    <span style={{ color: BRAND.sub }}>Model verdict:</span>{' '}
+                    <strong style={{ color: BRAND.ok }}>{modelVerdict || '(none)'}</strong>
+                    {modelRank !== -1 && (
+                      <span style={{ marginLeft: 8, color: BRAND.ok, fontWeight: 700 }}>
+                        Model rank #{modelRank + 1}
+                      </span>
+                    )}
+                    <span
+                      style={{
+                        marginLeft: 8,
+                        fontSize: 11,
+                        fontWeight: 700,
+                        padding: '1px 8px',
+                        borderRadius: 10,
+                        background: matched ? BRAND.okBg : '#fdecea',
+                        color: matched ? BRAND.ok : '#c62828',
+                      }}
+                    >
+                      {matched ? '✓ correct' : '✗ incorrect'}
+                    </span>
+                  </div>
+                  {explanations[c.id] && (
+                    <div style={{ marginTop: 4, color: BRAND.sub, fontSize: 12, lineHeight: 1.4 }}>
+                      <em>{explanations[c.id]}</em>
+                    </div>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+
+        {/* Justification — student vs model */}
+        <div style={{ ...sectionLabelStyle, color: BRAND.sub, marginBottom: 6 }}>Your Overall Justification</div>
+        <div style={{ ...studentAnswerBoxStyle, marginBottom: 10, whiteSpace: 'pre-wrap' }}>
+          {justification || emptyBox('(no justification submitted)')}
+        </div>
+        {md.justification && (
+          <>
+            <div style={{ ...sectionLabelStyle, color: BRAND.ok, marginBottom: 6 }}>Model Justification</div>
+            <div style={{ ...modelAnswerBoxStyle, whiteSpace: 'pre-wrap' }}>{md.justification}</div>
+          </>
+        )}
+      </FieldShell>
+    );
+  }
+
+  // ── REVIEW MODE (admin side-by-side) ───────────────────
+  const md = model?.data || {};
+  const verdicts = md.verdicts || {};
+  const ranking = Array.isArray(md.ranking) ? md.ranking : [];
+
+  // Compact tally for quick admin scan
+  const totalComps = comps.length;
+  const correctVerdicts = comps.filter((c) => {
+    const sv = decisions[c.id]?.verdict;
+    return sv && verdicts[c.id] && sv === verdicts[c.id];
+  }).length;
+  const studentTop3 = selections.slice(0, 3);
+  const modelTop3 = ranking.slice(0, 3);
+  const top3Match = studentTop3.filter((id) => modelTop3.includes(id)).length;
+
+  return (
+    <ReviewShell field={field}>
+      <div style={studentAnswerBoxStyle}>
+        <div style={{ ...sectionLabelStyle, color: BRAND.sub, fontSize: 10 }}>Student</div>
+        <div style={{ fontSize: 12, marginBottom: 6 }}>
+          Verdicts correct: <strong>{correctVerdicts}/{totalComps}</strong>
+          {' · '}Top-3 overlap: <strong>{top3Match}/3</strong>
+        </div>
+        <div style={{ fontSize: 12, marginBottom: 6 }}>
+          <span style={{ color: BRAND.sub }}>Picks:</span>{' '}
+          {studentTop3.length ? studentTop3.map((id, i) => `#${i + 1} ${id}`).join('  ') : <em>(none)</em>}
+        </div>
+        <div style={{ fontSize: 12, color: BRAND.sub, marginBottom: 4 }}>Justification:</div>
+        <div style={{ fontSize: 13, whiteSpace: 'pre-wrap' }}>
+          {justification || emptyBox('(empty)')}
+        </div>
+      </div>
+      <div style={modelAnswerBoxStyle}>
+        <div style={{ ...sectionLabelStyle, color: BRAND.ok, fontSize: 10 }}>Model</div>
+        <div style={{ fontSize: 12, marginBottom: 6 }}>
+          <span style={{ color: BRAND.sub }}>Picks:</span>{' '}
+          {modelTop3.length ? modelTop3.map((id, i) => `#${i + 1} ${id}`).join('  ') : <em>(none)</em>}
+        </div>
+        <div style={{ fontSize: 12, color: BRAND.sub, marginBottom: 4 }}>Justification:</div>
+        <div style={{ fontSize: 13, whiteSpace: 'pre-wrap' }}>
+          {md.justification || emptyBox('(none)')}
+        </div>
+      </div>
+    </ReviewShell>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════
 // SHELLS — wrap each field type's content in standard chrome
 // ═══════════════════════════════════════════════════════════
 
@@ -813,12 +1407,13 @@ export function FieldRenderer({ field, mode, value, onChange, model }) {
   const type = field.type || 'text';
   const props = { field, mode, value, onChange, model };
   switch (type) {
-    case 'checklist':  return <ChecklistField  {...props} />;
-    case 'select':     return <SelectField     {...props} />;
-    case 'parameters': return <ParametersField {...props} />;
-    case 'approaches': return <ApproachesField {...props} />;
+    case 'checklist':   return <ChecklistField   {...props} />;
+    case 'select':      return <SelectField      {...props} />;
+    case 'parameters':  return <ParametersField  {...props} />;
+    case 'approaches':  return <ApproachesField  {...props} />;
+    case 'comparables': return <ComparablesField {...props} />;
     case 'text':
-    default:           return <TextField       {...props} />;
+    default:            return <TextField        {...props} />;
   }
 }
 
@@ -846,6 +1441,12 @@ export function blankAnswerFor(field) {
         text: '',
       };
     }
+    case 'comparables':
+      return {
+        decisions: {},
+        selections: [],
+        justification: '',
+      };
     case 'text':
     default:
       return '';
@@ -883,6 +1484,26 @@ export function isAnswerComplete(field, value) {
         const j = justifs[idx];
         return typeof j === 'string' && j.trim() !== '';
       });
+    }
+    case 'comparables': {
+      // Every comp must have a verdict; rejected comps need a reason.
+      // Exactly 3 selections from accepted comps. Justification ≥ 40 chars.
+      const comps = field.options?.comps || [];
+      const decisions = value?.decisions || {};
+      const allDecided = comps.every((c) => {
+        const d = decisions[c.id];
+        if (!d || !d.verdict) return false;
+        if (d.verdict === 'reject' && (!d.reason || !d.reason.trim())) return false;
+        return true;
+      });
+      if (!allDecided) return false;
+      const selections = Array.isArray(value?.selections) ? value.selections : [];
+      if (selections.length !== 3) return false;
+      // All selections must be from accepted comps
+      const allFromAccepted = selections.every((id) => decisions[id]?.verdict === 'accept');
+      if (!allFromAccepted) return false;
+      const justification = typeof value?.justification === 'string' ? value.justification : '';
+      return justification.trim().length >= 40;
     }
     case 'text':
     default: {
