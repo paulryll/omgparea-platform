@@ -71,7 +71,7 @@ FROM module_sections WHERE code = 'M2-S4';
 INSERT INTO scenarios
   (category_id, order_index, difficulty, title, scenario_text)
 SELECT id, 1,
-  'introductory',
+  'basic',
   '142 Thornbush Lane — Purchase Loan Underwriting',
   'You are appraising a home at 142 Thornbush Lane, Simpsonville, SC for a purchase loan underwriting assignment. The subject is a 1,850 SF ranch built in 2005 with three bedrooms, two full bathrooms, a 2-car garage, and is in good condition. The lender requires GSE-compliant delivery (Fannie Mae / Freddie Mac).
 
