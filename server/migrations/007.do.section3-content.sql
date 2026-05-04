@@ -1,6 +1,11 @@
 -- ============================================================
 -- Migration 007 — Section 3 content (Comparable Selection & Analysis)
 --
+-- Two-part migration:
+--   1. Schema: extend section_fields.field_type CHECK constraint to
+--      allow the new 'comparables' field type used by Section 3.
+--   2. Data: seed Section M2-S3 content.
+--
 -- Seeds Section M2-S3:
 --   - 6 categories (Mortgage, Litigation, Estate&Tax, Private,
 --     Government, Specialty) — same color palette as Section 2
@@ -15,8 +20,9 @@
 --     justification live in model_answers.model_data — gated behind
 --     submit-and-lock by the existing reveal endpoint.
 --
--- No schema change — model_data and field_options_override columns
--- already exist on model_answers (added in earlier migrations).
+-- The model_data and field_options_override JSONB columns themselves
+-- already exist on model_answers (added in earlier migrations); this
+-- migration only extends the field_type whitelist.
 --
 -- Idempotency: this migration runs once and is recorded in the
 -- schemaversion table by the migration runner. It will never
@@ -33,6 +39,16 @@ BEGIN
     RAISE EXCEPTION 'Section M2-S3 not found — seed must run first';
   END IF;
 END $$;
+
+-- ─────────────── Schema change: extend field_type allowed values ───────────────
+-- An earlier migration restricted section_fields.field_type to a fixed list
+-- (text, checklist, select, parameters, approaches). Section 3 introduces a
+-- new type 'comparables' for the comp-selection workflow, so we drop and
+-- recreate the CHECK constraint with the additional value. Postgres has no
+-- in-place CHECK modify; drop+add is the standard pattern.
+ALTER TABLE section_fields DROP CONSTRAINT IF EXISTS section_fields_field_type_check;
+ALTER TABLE section_fields ADD CONSTRAINT section_fields_field_type_check
+  CHECK (field_type IN ('text', 'checklist', 'select', 'parameters', 'approaches', 'comparables'));
 
 -- ─────────────── Section field (one — the comparables workflow) ───────────────
 INSERT INTO section_fields (section_id, order_index, field_key, label, help_text, field_type, field_options)
