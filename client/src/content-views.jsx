@@ -33,7 +33,6 @@ import {
   FieldRenderer,
   blankAnswerFor,
   isAnswerComplete,
-  whatIsMissingFor,
   submitValueFor,
 } from './field-types.jsx';
 
@@ -261,23 +260,28 @@ function ScenarioRow({ s, categoryColor, onOpen }) {
   );
 }
 
+// Difficulty palette: cool → warm progression matching the
+// pedagogical intensity of each tier. Section 5 is the first
+// section to use all five tiers (introductory through expert).
 function difficultyColor(d) {
   return (
     {
-      basic: '#0891b2',
-      intermediate: '#0284c7',
-      advanced: '#7c3aed',
-      expert: '#be185d',
+      introductory: '#0d9488',  // teal-600
+      basic:        '#0891b2',  // cyan-600
+      intermediate: '#0284c7',  // sky-600
+      advanced:     '#7c3aed',  // violet-600
+      expert:       '#be185d',  // pink-700
     }[d] || BRAND.sub
   );
 }
 function difficultyBg(d) {
   return (
     {
-      basic: '#ecfeff',
-      intermediate: '#e0f2fe',
-      advanced: '#f3e8ff',
-      expert: '#fce7f3',
+      introductory: '#ccfbf1',  // teal-100
+      basic:        '#ecfeff',  // cyan-50
+      intermediate: '#e0f2fe',  // sky-100
+      advanced:     '#f3e8ff',  // violet-100
+      expert:       '#fce7f3',  // pink-100
     }[d] || '#f3f4f6'
   );
 }
@@ -330,24 +334,15 @@ export function ScenarioView({ scenarioId, onBack }) {
       .catch((e) => setErr(e.message));
   }, [scenarioId]);
 
-  // Compute which fields are still incomplete on every render. Drives the
-  // disabled state of the page-level Submit button and the per-field
-  // hint list shown below it.
-  const incompleteFields = data
-    ? data.fields
-        .map((f) => ({ field: f, reason: whatIsMissingFor(f, answers[f.key]) }))
-        .filter((x) => x.reason !== null)
-    : [];
-  const isFormComplete = data != null && incompleteFields.length === 0;
-
   const handleSubmit = async () => {
     if (!data) return;
 
-    // Defensive: button should be disabled if incomplete, but check anyway
-    // in case state is stale or someone calls this programmatically.
-    if (incompleteFields.length > 0) {
+    const missing = data.fields.filter((f) => !isAnswerComplete(f, answers[f.key]));
+    if (missing.length > 0) {
       setSubmitError(
-        `Please complete all ${data.fields.length} field${data.fields.length !== 1 ? 's' : ''} before submitting.`
+        `Please complete all ${data.fields.length} fields before submitting. Missing: ${missing
+          .map((f) => f.label)
+          .join(', ')}`
       );
       return;
     }
@@ -553,49 +548,20 @@ export function ScenarioView({ scenarioId, onBack }) {
           <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
             <button
               onClick={handleSubmit}
-              disabled={submitting || !isFormComplete}
+              disabled={submitting}
               style={{
                 ...btnPrimary,
                 padding: '12px 20px',
                 fontSize: 15,
-                opacity: (submitting || !isFormComplete) ? 0.5 : 1,
-                cursor: (submitting || !isFormComplete) ? 'not-allowed' : 'pointer',
+                opacity: submitting ? 0.6 : 1,
               }}
             >
-              {submitting
-                ? 'Submitting…'
-                : isFormComplete
-                  ? 'Submit Answers (Final — Cannot Be Changed)'
-                  : `Complete all steps to enable Submit (${incompleteFields.length} field${incompleteFields.length !== 1 ? 's' : ''} incomplete)`}
+              {submitting ? 'Submitting…' : 'Submit Answers (Final — Cannot Be Changed)'}
             </button>
-            {isFormComplete && (
-              <span style={{ fontSize: 12, color: BRAND.sub }}>
-                You'll see the model answers immediately after submitting.
-              </span>
-            )}
+            <span style={{ fontSize: 12, color: BRAND.sub }}>
+              You'll see the model answers immediately after submitting.
+            </span>
           </div>
-          {!isFormComplete && incompleteFields.length > 0 && (
-            <div
-              style={{
-                marginTop: 12,
-                padding: '10px 12px',
-                background: '#fff8e1',
-                border: `1px solid #f59e0b`,
-                borderRadius: 6,
-                fontSize: 12,
-                color: '#78350f',
-              }}
-            >
-              <div style={{ fontWeight: 700, marginBottom: 6 }}>What's still needed:</div>
-              <ul style={{ margin: 0, paddingLeft: 18, lineHeight: 1.6 }}>
-                {incompleteFields.map(({ field, reason }) => (
-                  <li key={field.key}>
-                    <strong>{field.label}:</strong> {reason}
-                  </li>
-                ))}
-              </ul>
-            </div>
-          )}
         </Card>
       )}
     </>
@@ -618,7 +584,6 @@ const SECTIONS_WITH_CONTENT = [
   { code: 'M2-S1', name: 'Problem Identification' },
   { code: 'M2-S2', name: 'Scope of Work' },
   { code: 'M2-S3', name: 'Comparable Selection & Analysis' },
-  { code: 'M2-S4', name: 'Adjustment Analysis' },
 ];
 
 // ───────────────────────────────────────────────────────────
