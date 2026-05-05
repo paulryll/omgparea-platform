@@ -10,7 +10,7 @@
 //   - Section structure response now exposes each field's
 //     field_type and field_options so the client can render
 //     the correct input (text, checklist, select, parameters,
-//     approaches).
+//     approaches, comparables, adjustment_grid, factor_analysis).
 //   - Scenario read endpoint includes model_data alongside
 //     answer_text, and student answers include answer_data.
 //   - Submit endpoint accepts both legacy string answers
@@ -296,6 +296,81 @@ function validateAnswer(field, raw) {
         step3_adjustments:    raw.step3_adjustments,
         step3_support:        raw.step3_support,
       },
+    };
+  }
+
+  if (type === 'factor_analysis') {
+    // Section 5 (Locational Influence) workflow — also intended for
+    // reuse by Sections 6, 7, and 11.
+    //
+    // Shape: {
+    //   pres: { factorId -> boolean, ... },
+    //   cls:  { factorId -> classificationString, ... },
+    //   rat:  { factorId -> rationaleString, ... }
+    // }
+    //
+    // For every factor where pres[id] === true, the student must have
+    // a non-empty classification and a rationale of at least
+    // min_rationale_chars characters (defaults to 20 if the section
+    // field_options does not specify).
+    //
+    // The factor list and the allowed classification options come from
+    // field_options_override at the scenario level — server-side
+    // validation here is shape only, not factor-by-factor correctness
+    // or list-membership. The client renderer enforces the dropdown
+    // options; the database stores whatever string the student submits.
+
+    const opts = field.field_options || {};
+    const minChars = Number.isInteger(opts.min_rationale_chars)
+      ? opts.min_rationale_chars
+      : 20;
+
+    const pres = raw.pres;
+    const cls  = raw.cls;
+    const rat  = raw.rat;
+
+    if (!pres || typeof pres !== 'object' || Array.isArray(pres)) {
+      return { ok: false, error: `"${field.label}" requires a pres (presence) object` };
+    }
+    if (!cls || typeof cls !== 'object' || Array.isArray(cls)) {
+      return { ok: false, error: `"${field.label}" requires a cls (classification) object` };
+    }
+    if (!rat || typeof rat !== 'object' || Array.isArray(rat)) {
+      return { ok: false, error: `"${field.label}" requires a rat (rationale) object` };
+    }
+
+    // At least one factor must be flagged present
+    const anyPresent = Object.values(pres).some((v) => v === true);
+    if (!anyPresent) {
+      return {
+        ok: false,
+        error: `"${field.label}" requires at least one factor to be identified as present`,
+      };
+    }
+
+    // Every present factor needs classification + rationale
+    for (const [id, isPresent] of Object.entries(pres)) {
+      if (isPresent !== true) continue;
+      const classification = cls[id];
+      if (typeof classification !== 'string' || !classification.trim()) {
+        return {
+          ok: false,
+          error: `"${field.label}" factor ${id} requires a classification`,
+        };
+      }
+      const rationale = rat[id];
+      if (typeof rationale !== 'string' || rationale.trim().length < minChars) {
+        return {
+          ok: false,
+          error: `"${field.label}" factor ${id} rationale must be at least ${minChars} characters`,
+        };
+      }
+    }
+
+    return {
+      ok: true,
+      text: null,
+      data: { pres, cls, rat },
     };
   }
 
@@ -607,6 +682,11 @@ router.get('/scenarios/:id', requireAuth, async (req, res) => {
 //   adjustment_grid: { step1_flags, step2_tables,
 //                      step2_reconciliation, step3_adjustments,
 //                      step3_support }  — see validator for detail
+//   factor_analysis: { pres: { factorId: bool, ... },
+//                      cls:  { factorId: classification, ... },
+//                      rat:  { factorId: rationale, ... } }
+//                  — every present factor needs classification +
+//                    rationale of at least min_rationale_chars
 //
 // For text fields, plain strings continue to work as before.
 //
