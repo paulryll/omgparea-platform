@@ -584,6 +584,9 @@ const SECTIONS_WITH_CONTENT = [
   { code: 'M2-S1', name: 'Problem Identification' },
   { code: 'M2-S2', name: 'Scope of Work' },
   { code: 'M2-S3', name: 'Comparable Selection & Analysis' },
+  { code: 'M2-S4', name: 'Adjustment Analysis' },
+  { code: 'M2-S5', name: 'Locational Influence' },
+  { code: 'M2-S6', name: 'Market Analysis' },
 ];
 
 // ───────────────────────────────────────────────────────────
