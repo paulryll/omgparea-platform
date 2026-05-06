@@ -10,7 +10,8 @@
 //   - Section structure response now exposes each field's
 //     field_type and field_options so the client can render
 //     the correct input (text, checklist, select, parameters,
-//     approaches, comparables, adjustment_grid, factor_analysis).
+//     approaches, comparables, adjustment_grid, factor_analysis,
+//     market_indicator_analysis).
 //   - Scenario read endpoint includes model_data alongside
 //     answer_text, and student answers include answer_data.
 //   - Submit endpoint accepts both legacy string answers
@@ -301,7 +302,7 @@ function validateAnswer(field, raw) {
 
   if (type === 'factor_analysis') {
     // Section 5 (Locational Influence) workflow — also intended for
-    // reuse by Sections 6, 7, and 11.
+    // reuse by Sections 7 and 11.
     //
     // Shape: {
     //   pres: { factorId -> boolean, ... },
@@ -371,6 +372,97 @@ function validateAnswer(field, raw) {
       ok: true,
       text: null,
       data: { pres, cls, rat },
+    };
+  }
+
+  if (type === 'market_indicator_analysis') {
+    // Section 6 (Market Analysis) workflow.
+    //
+    // Shape: {
+    //   factors: {
+    //     factorId: { present: boolean,
+    //                 classification?: string,
+    //                 rationale?: string },
+    //     ...
+    //   }
+    // }
+    //
+    // The student's submission shape is symmetric with model_data.factors
+    // so admin side-by-side comparison is direct. For every factor where
+    // present === true, the student must have a non-empty classification
+    // and a rationale of at least min_rationale_chars characters
+    // (defaults to 20 if the section field_options does not specify).
+    // For factors where present === false (distractors the student
+    // correctly rejected), no classification or rationale is required
+    // from the student — model_data carries the explanatory rationale
+    // for distractors.
+    //
+    // The factor list and the allowed classification options come from
+    // field_options_override at the scenario level — server-side
+    // validation here is shape only, not list-membership of the
+    // classification value. The client renderer enforces the dropdown
+    // options; the database stores whatever string the student submits.
+
+    const opts = field.field_options || {};
+    const minChars = Number.isInteger(opts.min_rationale_chars)
+      ? opts.min_rationale_chars
+      : 20;
+
+    const factors = raw.factors;
+    if (!factors || typeof factors !== 'object' || Array.isArray(factors)) {
+      return { ok: false, error: `"${field.label}" requires a factors object` };
+    }
+
+    // Every entry must be an object with a boolean present field.
+    for (const [id, entry] of Object.entries(factors)) {
+      if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
+        return {
+          ok: false,
+          error: `"${field.label}" factor ${id} must be an object`,
+        };
+      }
+      if (typeof entry.present !== 'boolean') {
+        return {
+          ok: false,
+          error: `"${field.label}" factor ${id} must have a boolean present field`,
+        };
+      }
+    }
+
+    // At least one factor must be flagged present
+    const anyPresent = Object.values(factors).some(
+      (entry) => entry && entry.present === true
+    );
+    if (!anyPresent) {
+      return {
+        ok: false,
+        error: `"${field.label}" requires at least one factor to be identified as present`,
+      };
+    }
+
+    // Every present factor needs classification + rationale of min length.
+    for (const [id, entry] of Object.entries(factors)) {
+      if (entry.present !== true) continue;
+      const classification = entry.classification;
+      if (typeof classification !== 'string' || !classification.trim()) {
+        return {
+          ok: false,
+          error: `"${field.label}" factor ${id} requires a classification`,
+        };
+      }
+      const rationale = entry.rationale;
+      if (typeof rationale !== 'string' || rationale.trim().length < minChars) {
+        return {
+          ok: false,
+          error: `"${field.label}" factor ${id} rationale must be at least ${minChars} characters`,
+        };
+      }
+    }
+
+    return {
+      ok: true,
+      text: optionalText,
+      data: { factors },
     };
   }
 
@@ -685,6 +777,11 @@ router.get('/scenarios/:id', requireAuth, async (req, res) => {
 //   factor_analysis: { pres: { factorId: bool, ... },
 //                      cls:  { factorId: classification, ... },
 //                      rat:  { factorId: rationale, ... } }
+//                  — every present factor needs classification +
+//                    rationale of at least min_rationale_chars
+//   market_indicator_analysis: { factors: { factorId: { present: bool,
+//                                                        classification?: string,
+//                                                        rationale?: string } } }
 //                  — every present factor needs classification +
 //                    rationale of at least min_rationale_chars
 //
