@@ -8,15 +8,19 @@
 //   - mode='review'  admin side-by-side comparison
 //
 // The types match section_fields.field_type:
-//   - text             a textarea
-//   - checklist        multi-select checkboxes
-//   - select           single-select radio buttons
-//   - parameters       labeled grid of small inputs with units
-//   - approaches       like checklist + per-option justification
-//   - comparables      Section 3 — 3-step screen/select/justify workflow
-//   - factor_analysis  Section 5 — locational factor presence +
-//                      classification + rationale (also intended for
-//                      reuse by Sections 6, 7, 11)
+//   - text                       a textarea
+//   - checklist                  multi-select checkboxes
+//   - select                     single-select radio buttons
+//   - parameters                 labeled grid of small inputs with units
+//   - approaches                 like checklist + per-option justification
+//   - comparables                Section 3 — 3-step screen/select/justify workflow
+//   - adjustment_grid            Section 4 — paired-sales / cost / regression workflow
+//   - factor_analysis            Section 5 — locational factor presence +
+//                                classification + rationale
+//   - market_indicator_analysis  Section 6 — market indicator presence +
+//                                classification + rationale + multi-table
+//                                market data + external context + net
+//                                conclusion + instructor commentary
 //
 // Storage convention:
 //   - Text fields: value is a string; on submit, posts as plain
@@ -1453,7 +1457,7 @@ function ComparablesField({ field, mode, value, onChange, model }) {
 //
 // A presence + classification + rationale workflow for a list
 // of locational factors. Used by Section M2-S5; designed to be
-// reused by Sections 6, 7, and 11 with configuration changes.
+// reused by Sections 7 and 11 with configuration changes.
 //
 // Storage shapes:
 //
@@ -2109,6 +2113,806 @@ function FactorAnalysisField({ field, mode, value, onChange, model }) {
 }
 
 // ═══════════════════════════════════════════════════════════
+// MARKET_INDICATOR_ANALYSIS (Section 6 — Market Analysis)
+// ═══════════════════════════════════════════════════════════
+//
+// A presence + classification + rationale workflow for a list
+// of market indicators, with multi-table market data and
+// external context displayed above the indicator checklist.
+// Used by Section M2-S6.
+//
+// Storage shapes:
+//
+//   field.options = {
+//     // Per-scenario context band:
+//     subject: {
+//       context_label,    // optional badge text e.g. "Lending Context"
+//       context_text,     // optional paragraph
+//       address_summary,  // optional bold one-liner address
+//       subject_summary,  // optional smaller one-liner property summary
+//       school,           // optional school zone string
+//       effective_date,   // optional effective date string
+//     },
+//     // One or more market data tables (e.g. for-sale + STR market):
+//     tables: [{ label: "...", cols: [...], rows: [[...], ...] }, ...],
+//     // External / macro context paragraph:
+//     external: "...",
+//     // The indicator list the student must analyze:
+//     factors: [{ id: "abs", label: "..." }, ...],
+//     // Allowed classifications for the dropdown:
+//     classification_options: ["Improving","Stable","Declining","Market-Dependent"],
+//     // Minimum length per rationale (defaults to 20):
+//     min_rationale_chars: 20,
+//     // Net conclusion paragraph revealed post-submit:
+//     net_conclusion: "...",
+//     // Instructor commentary revealed post-submit:
+//     commentary: "...",
+//   }
+//
+//   value (student answer) = {
+//     factors: {
+//       factorId: { present: bool,
+//                   classification?: string,
+//                   rationale?: string },
+//       ...
+//     }
+//   }
+//
+//   model.data (revealed post-submit) — symmetric with student value:
+//     factors: {
+//       factorId: { present: bool,
+//                   classification?: string,
+//                   rationale?: string },
+//       ...
+//     }
+//
+// The symmetric student/model shape means admin side-by-side
+// comparison reads from the same factorId keys on both sides.
+// -----------------------------------------------------------
+
+function MarketSubjectPanel({ subject }) {
+  if (!subject || Object.keys(subject).length === 0) return null;
+  const {
+    context_label,
+    context_text,
+    address_summary,
+    subject_summary,
+    school,
+    effective_date,
+  } = subject;
+
+  // Build a stats grid for school + effective_date, when present
+  const stats = [];
+  if (school) stats.push(['School', school]);
+  if (effective_date) stats.push(['Effective Date', effective_date]);
+
+  return (
+    <div
+      style={{
+        background: '#fdf2f8',
+        border: `1px solid ${BRAND.pink}`,
+        borderRadius: 8,
+        padding: '12px 14px',
+        marginBottom: 12,
+      }}
+    >
+      {context_label && (
+        <div style={{ ...sectionLabelStyle, color: BRAND.pink, marginBottom: 6 }}>
+          {context_label}
+        </div>
+      )}
+      {context_text && (
+        <div
+          style={{
+            fontSize: 13,
+            lineHeight: 1.55,
+            color: BRAND.ink,
+            background: 'rgba(255,255,255,0.6)',
+            padding: '8px 10px',
+            borderRadius: 6,
+            marginBottom: 8,
+            whiteSpace: 'pre-wrap',
+          }}
+        >
+          {context_text}
+        </div>
+      )}
+      {address_summary && (
+        <div style={{ fontSize: 14, fontWeight: 700, color: BRAND.ink, marginTop: 6 }}>
+          {address_summary}
+        </div>
+      )}
+      {subject_summary && (
+        <div style={{ fontSize: 12, color: BRAND.sub, marginTop: 2 }}>
+          {subject_summary}
+        </div>
+      )}
+      {stats.length > 0 && (
+        <div
+          style={{
+            display: 'grid',
+            gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))',
+            gap: '4px 14px',
+            marginTop: 8,
+            paddingTop: 8,
+            borderTop: `1px dashed ${BRAND.pink}`,
+          }}
+        >
+          {stats.map(([k, v]) => (
+            <div key={k} style={{ fontSize: 12, color: BRAND.ink }}>
+              <span style={{ color: BRAND.sub }}>{k}: </span>
+              <strong>{v}</strong>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function MarketDataTable({ table }) {
+  const { label, cols, rows } = table || {};
+  if (!Array.isArray(cols) || !Array.isArray(rows)) return null;
+  return (
+    <div>
+      {label && (
+        <div
+          style={{
+            fontSize: 12,
+            fontWeight: 700,
+            color: BRAND.ink,
+            marginBottom: 6,
+          }}
+        >
+          {label}
+        </div>
+      )}
+      <div style={{ overflowX: 'auto' }}>
+        <table
+          style={{
+            width: '100%',
+            borderCollapse: 'collapse',
+            fontSize: 13,
+          }}
+        >
+          <thead>
+            <tr>
+              {cols.map((c, ci) => (
+                <th
+                  key={ci}
+                  style={{
+                    textAlign: ci === 0 ? 'left' : 'right',
+                    padding: '6px 10px',
+                    borderBottom: `2px solid ${BRAND.line}`,
+                    background: '#f9fafb',
+                    fontWeight: 700,
+                    color: BRAND.sub,
+                    fontSize: 11,
+                    textTransform: 'uppercase',
+                    letterSpacing: 0.4,
+                    whiteSpace: 'nowrap',
+                  }}
+                >
+                  {c}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((row, ri) => (
+              <tr key={ri}>
+                {row.map((cell, ci) => (
+                  <td
+                    key={ci}
+                    style={{
+                      textAlign: ci === 0 ? 'left' : 'right',
+                      padding: '6px 10px',
+                      borderBottom:
+                        ri < rows.length - 1 ? `1px solid ${BRAND.line}` : 'none',
+                      color: BRAND.ink,
+                      fontWeight: ci === 0 ? 500 : 600,
+                      whiteSpace: 'nowrap',
+                    }}
+                  >
+                    {cell}
+                  </td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+function MarketDataTablesPanel({ tables }) {
+  if (!Array.isArray(tables) || tables.length === 0) return null;
+  return (
+    <div
+      style={{
+        background: '#fff',
+        border: `1px solid ${BRAND.line}`,
+        borderRadius: 8,
+        padding: '12px 14px',
+        marginBottom: 12,
+      }}
+    >
+      <div style={{ ...sectionLabelStyle, color: BRAND.sub, marginBottom: 10 }}>
+        Market Data
+      </div>
+      <div style={{ display: 'grid', gap: 14 }}>
+        {tables.map((tbl, ti) => (
+          <MarketDataTable key={ti} table={tbl} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function ExternalContextPanel({ external }) {
+  if (typeof external !== 'string' || !external.trim()) return null;
+  return (
+    <div
+      style={{
+        background: '#fafafa',
+        border: `1px solid ${BRAND.line}`,
+        borderRadius: 8,
+        padding: '12px 14px',
+        marginBottom: 12,
+      }}
+    >
+      <div style={{ ...sectionLabelStyle, color: BRAND.sub, marginBottom: 6 }}>
+        External / Macro Context
+      </div>
+      <div
+        style={{
+          fontSize: 13,
+          lineHeight: 1.65,
+          color: BRAND.ink,
+          whiteSpace: 'pre-wrap',
+        }}
+      >
+        {external}
+      </div>
+    </div>
+  );
+}
+
+function MarketScoreBreakdown({ factors, studentFactors, modelFactors }) {
+  let presCorrect = 0;
+  let clsCorrect = 0;
+  let clsTotal = 0;
+  for (const f of factors) {
+    const stuEntry = studentFactors[f.id] || {};
+    const modEntry = modelFactors[f.id] || {};
+    const stuPres = stuEntry.present === true;
+    const modPres = modEntry.present === true;
+    if (stuPres === modPres) presCorrect++;
+    if (modPres) {
+      clsTotal++;
+      if (stuPres && stuEntry.classification === modEntry.classification) clsCorrect++;
+    }
+  }
+  return (
+    <div
+      style={{
+        display: 'grid',
+        gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))',
+        gap: 10,
+        background: '#f9fafb',
+        border: `1px solid ${BRAND.line}`,
+        borderRadius: 8,
+        padding: '10px 14px',
+        marginBottom: 12,
+      }}
+    >
+      <div>
+        <div style={{ ...sectionLabelStyle, color: BRAND.sub, fontSize: 10 }}>
+          Presence Identifications
+        </div>
+        <div style={{ fontSize: 16, fontWeight: 700, color: BRAND.ink }}>
+          {presCorrect} / {factors.length}
+        </div>
+      </div>
+      <div>
+        <div style={{ ...sectionLabelStyle, color: BRAND.sub, fontSize: 10 }}>
+          Classifications Correct
+        </div>
+        <div style={{ fontSize: 16, fontWeight: 700, color: BRAND.ink }}>
+          {clsCorrect} / {clsTotal}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function MarketFactorReviewRow({ factor, studentEntry, modelEntry, perspective }) {
+  const studentPres = studentEntry?.present === true;
+  const studentCls = studentEntry?.classification;
+  const studentRat = studentEntry?.rationale;
+  const modelPres = modelEntry?.present === true;
+  const modelCls = modelEntry?.classification;
+  const modelRat = modelEntry?.rationale;
+
+  // Decide status indicator and color band — same rules as Section 5
+  let statusBg, statusBd, statusIcon;
+  if (studentPres !== modelPres) {
+    statusBg = '#fdecea';
+    statusBd = '#c62828';
+    statusIcon = '✗';
+  } else if (modelPres && studentCls !== modelCls) {
+    statusBg = '#fff8e1';
+    statusBd = '#ed8936';
+    statusIcon = '⚠';
+  } else {
+    statusBg = BRAND.okBg;
+    statusBd = BRAND.ok;
+    statusIcon = '✓';
+  }
+
+  const youOrStudent = perspective === 'admin' ? 'Student' : 'Your';
+
+  // Build a one-line inline message, when applicable
+  let inlineMsg = null;
+  if (studentPres && !modelPres) {
+    inlineMsg = `${perspective === 'admin' ? 'Student checked this' : 'You checked this'} — but it is a distractor not present in the scenario.`;
+  } else if (!studentPres && modelPres) {
+    inlineMsg = `This indicator IS present — ${perspective === 'admin' ? 'student' : 'you'} should have checked it.`;
+  } else if (studentPres && modelPres && studentCls !== modelCls) {
+    inlineMsg = `Present, but misclassified. Correct classification: ${modelCls || '(none)'}.`;
+  }
+
+  // Show model panel if model says present, OR if student wrongly checked a
+  // distractor. For correctly-rejected distractors (both unchecked), no
+  // model panel — the row's status icon is sufficient.
+  const showModelPanel = modelPres || studentPres;
+
+  return (
+    <div
+      style={{
+        border: `1px solid ${statusBd}`,
+        background: statusBg,
+        borderRadius: 8,
+        overflow: 'hidden',
+      }}
+    >
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 10,
+          padding: '10px 12px',
+          flexWrap: 'wrap',
+        }}
+      >
+        <span
+          style={{
+            fontSize: 14,
+            fontWeight: 800,
+            color: statusBd,
+            flexShrink: 0,
+            width: 18,
+            textAlign: 'center',
+          }}
+        >
+          {statusIcon}
+        </span>
+        <span
+          style={{
+            background: BRAND.ink,
+            color: '#fff',
+            fontSize: 11,
+            fontWeight: 700,
+            padding: '2px 7px',
+            borderRadius: 4,
+            flexShrink: 0,
+            minWidth: 22,
+            textAlign: 'center',
+          }}
+        >
+          {factor.id}
+        </span>
+        <span style={{ fontSize: 14, color: BRAND.ink, flex: 1, minWidth: 140 }}>
+          {factor.label}
+        </span>
+      </div>
+      {inlineMsg && (
+        <div
+          style={{
+            padding: '0 12px 10px',
+            fontSize: 12,
+            color: BRAND.ink,
+            fontWeight: 600,
+          }}
+        >
+          {inlineMsg}
+        </div>
+      )}
+      <div
+        style={{
+          padding: '8px 12px',
+          background: 'rgba(255,255,255,0.6)',
+          fontSize: 12,
+        }}
+      >
+        <div style={{ ...sectionLabelStyle, color: BRAND.sub, fontSize: 10 }}>
+          {youOrStudent} Answer
+        </div>
+        <div style={{ color: BRAND.ink, marginTop: 2 }}>
+          {studentPres ? (
+            <>
+              <strong>Checked</strong>
+              {studentCls && <> · {studentCls}</>}
+            </>
+          ) : (
+            <em style={{ color: BRAND.sub }}>Not checked</em>
+          )}
+        </div>
+        {studentRat && (
+          <div
+            style={{
+              fontSize: 12,
+              color: BRAND.sub,
+              marginTop: 4,
+              whiteSpace: 'pre-wrap',
+              lineHeight: 1.5,
+            }}
+          >
+            {studentRat}
+          </div>
+        )}
+      </div>
+      {showModelPanel && (
+        <div
+          style={{
+            padding: '8px 12px',
+            background: 'rgba(15,118,110,0.08)',
+            borderTop: `1px solid ${BRAND.line}`,
+            fontSize: 12,
+          }}
+        >
+          <div style={{ ...sectionLabelStyle, color: BRAND.ok, fontSize: 10 }}>
+            Model Answer
+          </div>
+          <div style={{ color: BRAND.ink, marginTop: 2 }}>
+            {modelPres ? (
+              <>
+                <strong>Present</strong>
+                {modelCls && <> · {modelCls}</>}
+              </>
+            ) : (
+              <em style={{ color: BRAND.sub }}>Distractor — should not be checked</em>
+            )}
+          </div>
+          {modelRat && (
+            <div
+              style={{
+                fontSize: 12,
+                color: BRAND.sub,
+                marginTop: 4,
+                whiteSpace: 'pre-wrap',
+                lineHeight: 1.5,
+              }}
+            >
+              {modelRat}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function NetConclusionPanel({ netConclusion }) {
+  if (typeof netConclusion !== 'string' || !netConclusion.trim()) return null;
+  return (
+    <div
+      style={{
+        marginTop: 14,
+        background: BRAND.okBg,
+        border: `2px solid ${BRAND.ok}`,
+        borderRadius: 8,
+        padding: '14px 16px',
+      }}
+    >
+      <div style={{ ...sectionLabelStyle, color: BRAND.ok, marginBottom: 8 }}>
+        Model Net Conclusion
+      </div>
+      <div
+        style={{
+          fontSize: 14,
+          lineHeight: 1.65,
+          color: BRAND.ink,
+          whiteSpace: 'pre-wrap',
+        }}
+      >
+        {netConclusion}
+      </div>
+    </div>
+  );
+}
+
+function MarketCommentaryPanel({ commentary }) {
+  if (typeof commentary !== 'string' || !commentary.trim()) return null;
+  return (
+    <div
+      style={{
+        marginTop: 14,
+        background: '#fdf2f8',
+        border: `2px solid ${BRAND.pink}`,
+        borderRadius: 8,
+        padding: '14px 16px',
+      }}
+    >
+      <div style={{ ...sectionLabelStyle, color: BRAND.pink, marginBottom: 10 }}>
+        Instructor Commentary
+      </div>
+      <div
+        style={{
+          fontSize: 13,
+          lineHeight: 1.65,
+          color: BRAND.ink,
+          whiteSpace: 'pre-wrap',
+        }}
+      >
+        {commentary}
+      </div>
+    </div>
+  );
+}
+
+function MarketIndicatorAnalysisField({ field, mode, value, onChange, model }) {
+  const opts = field.options || {};
+  const subject = opts.subject || {};
+  const tables = Array.isArray(opts.tables) ? opts.tables : [];
+  const external = typeof opts.external === 'string' ? opts.external : '';
+  const factors = Array.isArray(opts.factors) ? opts.factors : [];
+  const classificationOptions = Array.isArray(opts.classification_options)
+    ? opts.classification_options
+    : ['Improving', 'Stable', 'Declining', 'Market-Dependent'];
+  const minRationaleChars = Number.isInteger(opts.min_rationale_chars)
+    ? opts.min_rationale_chars
+    : 20;
+  const netConclusion = typeof opts.net_conclusion === 'string' ? opts.net_conclusion : '';
+  const commentary = typeof opts.commentary === 'string' ? opts.commentary : '';
+
+  // Student answer shape: { factors: { [id]: { present, classification?, rationale? } } }
+  const studentFactors =
+    value?.factors && typeof value.factors === 'object' && !Array.isArray(value.factors)
+      ? value.factors
+      : {};
+
+  // Model data is symmetric with student value
+  const modelFactors =
+    model?.data?.factors && typeof model.data.factors === 'object' && !Array.isArray(model.data.factors)
+      ? model.data.factors
+      : {};
+
+  // ── Helpers (edit mode) ──────────────────────────────────
+  // Toggling preserves classification + rationale across check/uncheck —
+  // matches Section 5's UX. The validator only enforces classification +
+  // rationale for present factors, so any retained values for unchecked
+  // factors are harmless.
+  const togglePres = (id) => {
+    const prev = studentFactors[id] || {};
+    const newPresent = !(prev.present === true);
+    onChange({
+      ...value,
+      factors: { ...studentFactors, [id]: { ...prev, present: newPresent } },
+    });
+  };
+  const setCls = (id, v) => {
+    const prev = studentFactors[id] || { present: false };
+    onChange({
+      ...value,
+      factors: { ...studentFactors, [id]: { ...prev, classification: v } },
+    });
+  };
+  const setRat = (id, v) => {
+    const prev = studentFactors[id] || { present: false };
+    onChange({
+      ...value,
+      factors: { ...studentFactors, [id]: { ...prev, rationale: v } },
+    });
+  };
+
+  // ── EDIT MODE ────────────────────────────────────────────
+  if (mode === 'edit') {
+    return (
+      <FieldShell field={field}>
+        <MarketSubjectPanel subject={subject} />
+        <MarketDataTablesPanel tables={tables} />
+        <ExternalContextPanel external={external} />
+        <div style={{ ...sectionLabelStyle, color: BRAND.ink, marginBottom: 4 }}>
+          Identify, Classify, and Support
+        </div>
+        <div style={{ fontSize: 12, color: BRAND.sub, marginBottom: 10, lineHeight: 1.5 }}>
+          Check each indicator that is present in this scenario, classify its market direction,
+          and write your supporting rationale. Leave unchecked any indicator not present.
+        </div>
+        <div style={{ display: 'grid', gap: 10 }}>
+          {factors.map((f) => {
+            const entry = studentFactors[f.id] || { present: false };
+            const checked = entry.present === true;
+            const cls = typeof entry.classification === 'string' ? entry.classification : '';
+            const rat = typeof entry.rationale === 'string' ? entry.rationale : '';
+            return (
+              <div
+                key={f.id}
+                style={{
+                  border: `1px solid ${checked ? BRAND.pink : BRAND.line}`,
+                  borderRadius: 8,
+                  background: checked ? '#fdf2f8' : '#fafafa',
+                  overflow: 'hidden',
+                }}
+              >
+                <div
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 10,
+                    padding: '10px 12px',
+                    flexWrap: 'wrap',
+                  }}
+                >
+                  <input
+                    type="checkbox"
+                    checked={checked}
+                    onChange={() => togglePres(f.id)}
+                    style={{ accentColor: BRAND.pink, flexShrink: 0 }}
+                  />
+                  <span
+                    style={{
+                      background: checked ? BRAND.pink : '#f3f4f6',
+                      color: checked ? '#fff' : BRAND.sub,
+                      fontSize: 11,
+                      fontWeight: 700,
+                      padding: '2px 7px',
+                      borderRadius: 4,
+                      flexShrink: 0,
+                      minWidth: 22,
+                      textAlign: 'center',
+                    }}
+                  >
+                    {f.id}
+                  </span>
+                  <span style={{ fontSize: 14, color: BRAND.ink, flex: 1, minWidth: 140 }}>
+                    {f.label}
+                  </span>
+                  <select
+                    value={cls}
+                    disabled={!checked}
+                    onChange={(e) => setCls(f.id, e.target.value)}
+                    style={{
+                      padding: '5px 10px',
+                      fontSize: 13,
+                      borderRadius: 6,
+                      border: `1px solid ${checked ? BRAND.pink : BRAND.line}`,
+                      background: checked ? '#fff' : '#f3f4f6',
+                      color: checked ? BRAND.ink : BRAND.sub,
+                      cursor: checked ? 'pointer' : 'default',
+                      minWidth: 170,
+                      outline: 'none',
+                      fontFamily: 'inherit',
+                    }}
+                  >
+                    <option value="">— Classify —</option>
+                    {classificationOptions.map((o) => (
+                      <option key={o} value={o}>
+                        {o}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                {checked && (
+                  <div style={{ padding: '0 12px 10px' }}>
+                    <textarea
+                      rows={3}
+                      value={rat}
+                      onChange={(e) => setRat(f.id, e.target.value)}
+                      placeholder={`Why did you classify this indicator as you did? (min ${minRationaleChars} characters)`}
+                      style={{
+                        width: '100%',
+                        boxSizing: 'border-box',
+                        padding: '8px 10px',
+                        fontSize: 13,
+                        lineHeight: 1.5,
+                        borderRadius: 6,
+                        border: `1px solid ${BRAND.line}`,
+                        background: '#fff',
+                        color: BRAND.ink,
+                        resize: 'vertical',
+                        fontFamily: 'inherit',
+                        minHeight: 60,
+                        outline: 'none',
+                      }}
+                    />
+                    <div
+                      style={{
+                        fontSize: 11,
+                        color: rat.length < minRationaleChars ? '#c62828' : BRAND.sub,
+                        marginTop: 3,
+                        textAlign: 'right',
+                      }}
+                    >
+                      {rat.length} characters
+                      {rat.length < minRationaleChars ? ` (min ${minRationaleChars})` : ''}
+                    </div>
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      </FieldShell>
+    );
+  }
+
+  // ── LOCKED MODE (post-submit, model revealed) ────────────
+  if (mode === 'locked') {
+    return (
+      <FieldShell field={field}>
+        <MarketSubjectPanel subject={subject} />
+        <MarketDataTablesPanel tables={tables} />
+        <ExternalContextPanel external={external} />
+        <MarketScoreBreakdown
+          factors={factors}
+          studentFactors={studentFactors}
+          modelFactors={modelFactors}
+        />
+        <div style={{ ...sectionLabelStyle, color: BRAND.sub, marginBottom: 8 }}>
+          Indicator Review
+        </div>
+        <div style={{ display: 'grid', gap: 8 }}>
+          {factors.map((f) => (
+            <MarketFactorReviewRow
+              key={f.id}
+              factor={f}
+              studentEntry={studentFactors[f.id]}
+              modelEntry={modelFactors[f.id]}
+              perspective="student"
+            />
+          ))}
+        </div>
+        <NetConclusionPanel netConclusion={netConclusion} />
+        <MarketCommentaryPanel commentary={commentary} />
+      </FieldShell>
+    );
+  }
+
+  // ── REVIEW MODE (admin reviewing a student) ──────────────
+  return (
+    <FieldShell field={field}>
+      <MarketSubjectPanel subject={subject} />
+      <MarketDataTablesPanel tables={tables} />
+      <ExternalContextPanel external={external} />
+      <MarketScoreBreakdown
+        factors={factors}
+        studentFactors={studentFactors}
+        modelFactors={modelFactors}
+      />
+      <div style={{ ...sectionLabelStyle, color: BRAND.sub, marginBottom: 8 }}>
+        Indicator Review
+      </div>
+      <div style={{ display: 'grid', gap: 8 }}>
+        {factors.map((f) => (
+          <MarketFactorReviewRow
+            key={f.id}
+            factor={f}
+            studentEntry={studentFactors[f.id]}
+            modelEntry={modelFactors[f.id]}
+            perspective="admin"
+          />
+        ))}
+      </div>
+      <NetConclusionPanel netConclusion={netConclusion} />
+      <MarketCommentaryPanel commentary={commentary} />
+    </FieldShell>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════
 // SHELLS — wrap each field type's content in standard chrome
 // ═══════════════════════════════════════════════════════════
 
@@ -2153,14 +2957,15 @@ export function FieldRenderer({ field, mode, value, onChange, model }) {
   const type = field.type || 'text';
   const props = { field, mode, value, onChange, model };
   switch (type) {
-    case 'checklist':   return <ChecklistField   {...props} />;
-    case 'select':      return <SelectField      {...props} />;
-    case 'parameters':  return <ParametersField  {...props} />;
-    case 'approaches':  return <ApproachesField  {...props} />;
-    case 'comparables': return <ComparablesField {...props} />;
-    case 'factor_analysis': return <FactorAnalysisField {...props} />;
+    case 'checklist':                 return <ChecklistField                {...props} />;
+    case 'select':                    return <SelectField                   {...props} />;
+    case 'parameters':                return <ParametersField               {...props} />;
+    case 'approaches':                return <ApproachesField               {...props} />;
+    case 'comparables':               return <ComparablesField              {...props} />;
+    case 'factor_analysis':           return <FactorAnalysisField           {...props} />;
+    case 'market_indicator_analysis': return <MarketIndicatorAnalysisField  {...props} />;
     case 'text':
-    default:            return <TextField        {...props} />;
+    default:                          return <TextField                     {...props} />;
   }
 }
 
@@ -2196,6 +3001,8 @@ export function blankAnswerFor(field) {
       };
     case 'factor_analysis':
       return { pres: {}, cls: {}, rat: {} };
+    case 'market_indicator_analysis':
+      return { factors: {} };
     case 'text':
     default:
       return '';
@@ -2271,6 +3078,31 @@ export function isAnswerComplete(field, value) {
         if (isPresent !== true) continue;
         if (typeof cls[id] !== 'string' || !cls[id].trim()) return false;
         const r = rat[id];
+        if (typeof r !== 'string' || r.trim().length < minChars) return false;
+      }
+      return true;
+    }
+    case 'market_indicator_analysis': {
+      // Every indicator flagged as present must have a non-empty
+      // classification and a rationale of at least min_rationale_chars
+      // (defaults to 20). At least one indicator must be flagged present.
+      // Symmetric with the server-side validator and with model_data shape.
+      const opts = field.options || {};
+      const minChars = Number.isInteger(opts.min_rationale_chars)
+        ? opts.min_rationale_chars
+        : 20;
+      const factors =
+        value?.factors && typeof value.factors === 'object' && !Array.isArray(value.factors)
+          ? value.factors
+          : {};
+      const anyPresent = Object.values(factors).some(
+        (entry) => entry && entry.present === true
+      );
+      if (!anyPresent) return false;
+      for (const [id, entry] of Object.entries(factors)) {
+        if (!entry || entry.present !== true) continue;
+        if (typeof entry.classification !== 'string' || !entry.classification.trim()) return false;
+        const r = entry.rationale;
         if (typeof r !== 'string' || r.trim().length < minChars) return false;
       }
       return true;
